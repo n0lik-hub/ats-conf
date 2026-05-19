@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Мастер конфигурации IP-АТС Т76-С
-Версия: 1.0
-Дата: 2026-05-19
+Мастер конфигурации IP-АТС Т76-С - Хранение данных и генерация конфигурации
+Версия: 2.1
 """
 
-import customtkinter as ctk
-from tkinter import messagebox, filedialog
+from typing import Dict, List, Any, Optional
 import re
-import ipaddress
-from typing import Dict, List, Any, Optional, Tuple
 
 
 # ============================================================================
@@ -17,40 +13,50 @@ from typing import Dict, List, Any, Optional, Tuple
 # ============================================================================
 
 class ConfigData:
-    """Класс-контейнер для хранения всех введённых данных конфигурации."""
+    """Контейнер для всех данных конфигурации."""
     
     def __init__(self):
-        self.reset()
-    
-    def reset(self):
-        """Сброс всех данных."""
         # SYSTEM
-        self.system = {'HOSTNAME': 'ats1'}
+        self.system: Dict[str, Any] = {'HOSTNAME': 'ats1'}
         
-        # NTP (необязательная)
-        self.ntp = None  # None если не используется
+        # NTP
+        self.ntp_enabled: bool = False
+        self.ntp: Dict[str, Any] = {
+            'IP_SRV': '',
+            'INTERVAL': 14400
+        }
         
         # NETWORK
-        self.network = {
-            'IFACE': [],  # список словарей
+        self.network: Dict[str, List[Dict]] = {
+            'IFACE': [],
             'ROUTE': [],
             'ARP': []
         }
         
-        # MPLS (необязательная)
-        self.mpls = {
+        # MPLS
+        self.mpls_enabled: bool = False
+        self.mpls: Dict[str, List[Dict]] = {
             'MPLS_RULE_OUT': [],
             'MPLS_RULE_IN': []
         }
         
-        # TUNNELS (необязательная)
-        self.tunnels = None
+        # TUNNELS
+        self.tunnels_enabled: bool = False
+        self.tunnels: Dict[str, Any] = {
+            'OPTIONS': {'PORT': 5000, 'IFACE_NAME': '', 'COMMANDS': []},
+            'DEFAULT': {'COMPRESS': False, 'SPEED': ''},
+            'TUN': [],
+            'SERVERS': [],
+            'CLIENTS': []
+        }
         
-        # TC (необязательная)
-        self.tc = []
+        # TC
+        self.tc_enabled: bool = False
+        self.tc: List[Dict] = []
         
-        # IPTABLES (необязательная)
-        self.iptables = {
+        # IPTABLES
+        self.iptables_enabled: bool = False
+        self.iptables: Dict[str, List[Dict]] = {
             'INPUT': [],
             'OUTPUT': [],
             'FORWARD': [],
@@ -59,20 +65,44 @@ class ConfigData:
             'CHAIN': []
         }
         
-        # IAX (необязательная)
-        self.iax = {
-            'GENERAL': {},
+        # IAX
+        self.iax_enabled: bool = False
+        self.iax: Dict[str, Any] = {
+            'GENERAL': {
+                'AUTOKILL': True,
+                'BINDADDR': '0.0.0.0',
+                'BANDWIDTH': 'low',
+                'CODECPRIORITY': 'host',
+                'JITTERBUFFER': False,
+                'FORCEJITTERBUFFER': False,
+                'MAXJITTERBUFFER': 500,
+                'MAXJITTERINTERPS': 10,
+                'RESYNCTHRESHOLD': 1000
+            },
             'IAX_ROUTE': []
         }
         
-        # SIP (необязательная)
-        self.sip = {
-            'GENERAL': {},
+        # SIP
+        self.sip_enabled: bool = False
+        self.sip: Dict[str, Any] = {
+            'GENERAL': {
+                'CONTEXT': '',
+                'ALLOWOVERLAP': False,
+                'BINDPORT': 5060,
+                'BINDADDR': '0.0.0.0',
+                'SRVLOOKUP': False,
+                'DISALLOW': 'all',
+                'ALLOW': '',
+                'REGISTER': '',
+                'CANREINVITE': False,
+                'INSECURE': 'no'
+            },
             'PHONE': []
         }
         
-        # ZAPTEL (необязательная)
-        self.zaptel = {
+        # ZAPTEL
+        self.zaptel_enabled: bool = False
+        self.zaptel: Dict[str, Any] = {
             'LOADZONE': 'ru',
             'DEFAULTZONE': 'ru',
             'FXOKS': '',
@@ -80,8 +110,9 @@ class ConfigData:
             'CHAN_E1': []
         }
         
-        # ZAPATA (необязательная)
-        self.zapata = {
+        # ZAPATA
+        self.zapata_enabled: bool = False
+        self.zapata: Dict[str, Any] = {
             'CONTEXT': '',
             'SWITCHTYPE': '',
             'SIGNALLING': '',
@@ -93,8 +124,8 @@ class ConfigData:
             'CHAN': []
         }
         
-        # EXTENSIONS (обязательная)
-        self.extensions = {
+        # EXTENSIONS
+        self.extensions: Dict[str, Any] = {
             'GENERAL': {
                 'STATIC': False,
                 'WRITEPROTECT': False,
@@ -105,193 +136,18 @@ class ConfigData:
             'EXTENGROUP': []
         }
         
-        # ALARM (необязательная)
-        self.alarm = []
+        # ALARM
+        self.alarm_enabled: bool = False
+        self.alarm: List[Dict] = []
         
         # Справочники для проверки ссылочной целостности
-        self.zap_groups = set()  # номера групп из ZAPATA
-        self.iax_names = set()   # имена из IAX_ROUTE
-        self.sip_numbers = set() # номера из SIP PHONE
-        self.context_names = set() # имена контекстов из EXTENSIONS
+        self.zap_groups: List[str] = []  # Группы Zap (g1, g2, ...)
+        self.iax_names: List[str] = []   # Имена IAX_ROUTE
+        self.sip_numbers: List[str] = [] # Номера SIP PHONE
     
-    def get_defined_groups(self) -> set:
-        """Возвращает множество определённых групп Zap."""
-        return self.zap_groups
-    
-    def get_iax_names(self) -> set:
-        """Возвращает множество имён IAX каналов."""
-        return self.iax_names
-    
-    def get_sip_numbers(self) -> set:
-        """Возвращает множество SIP номеров."""
-        return self.sip_numbers
-    
-    def get_context_names(self) -> set:
-        """Возвращает множество имён контекстов."""
-        return self.context_names
-
-
-# ============================================================================
-# ФУНКЦИИ ВАЛИДАЦИИ
-# ============================================================================
-
-def validate_hostname(value: str) -> Tuple[bool, str]:
-    """Проверка имени хоста."""
-    if not value:
-        return False, "Имя хоста не может быть пустым"
-    if len(value) > 63:
-        return False, "Длина имени хоста не должна превышать 63 символа"
-    pattern = r'^[a-zA-Z0-9._-]+$'
-    if not re.match(pattern, value):
-        return False, "Имя хоста должно содержать только латиницу, цифры, дефис, подчёркивание и точку"
-    return True, ""
-
-
-def validate_ipv4(value: str) -> Tuple[bool, str]:
-    """Проверка IPv4 адреса."""
-    if not value:
-        return True, ""  # пустое значение допустимо для опциональных полей
-    try:
-        addr = ipaddress.IPv4Address(value)
-        # Проверка на ведущие нули
-        parts = value.split('.')
-        for part in parts:
-            if len(part) > 1 and part.startswith('0'):
-                return False, f"Октет '{part}' содержит ведущие нули"
-        return True, ""
-    except ipaddress.AddressValueError:
-        return False, "Некорректный формат IPv4 адреса"
-
-
-def validate_netmask(value: str) -> Tuple[bool, str]:
-    """Проверка маски подсети."""
-    if not value:
-        return True, ""
-    valid, msg = validate_ipv4(value)
-    if not valid:
-        return False, msg
-    
-    # Проверка что маска корректна (последовательность единиц слева)
-    try:
-        addr = ipaddress.IPv4Address(value)
-        binary = bin(int(addr))[2:].zfill(32)
-        # Маска должна быть последовательностью 1 затем 0
-        if '01' in binary:
-            return False, "Некорректная маска подсети"
-        return True, ""
-    except:
-        return False, "Некорректная маска подсети"
-
-
-def validate_mac(value: str) -> Tuple[bool, str]:
-    """Проверка MAC адреса."""
-    if not value:
-        return True, ""
-    pattern = r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
-    if not re.match(pattern, value):
-        return False, "MAC адрес должен быть в формате XX:XX:XX:XX:XX:XX"
-    return True, ""
-
-
-def validate_iface_name(value: str) -> Tuple[bool, str]:
-    """Проверка имени интерфейса."""
-    if not value:
-        return False, "Имя интерфейса не может быть пустым"
-    pattern = r'^eth[01](:[0-9])?$'
-    if not re.match(pattern, value):
-        return False, "Имя интерфейса должно быть eth0, eth1, eth0:0..eth0:9, eth1:0..eth1:9"
-    return True, ""
-
-
-def validate_integer(value: str, min_val: int, max_val: int) -> Tuple[bool, str]:
-    """Проверка целого числа в диапазоне."""
-    if not value:
-        return True, ""
-    try:
-        num = int(value)
-        if num < min_val or num > max_val:
-            return False, f"Значение должно быть в диапазоне {min_val}-{max_val}"
-        return True, ""
-    except ValueError:
-        return False, "Должно быть целое число"
-
-
-def validate_port_range(value: str, min_port: int = 1, max_port: int = 65535) -> Tuple[bool, str]:
-    """Проверка диапазона портов вида '1-15,17-31'."""
-    if not value:
-        return True, ""
-    
-    parts = value.split(',')
-    all_ports = set()
-    
-    for part in parts:
-        part = part.strip()
-        if '-' in part:
-            try:
-                start, end = part.split('-')
-                start = int(start.strip())
-                end = int(end.strip())
-                if start < min_port or end > max_port or start > end:
-                    return False, f"Некорректный диапазон: {part}"
-                ports = set(range(start, end + 1))
-            except:
-                return False, f"Некорректный диапазон: {part}"
-        else:
-            try:
-                port = int(part)
-                if port < min_port or port > max_port:
-                    return False, f"Порт {port} вне диапазона {min_port}-{max_port}"
-                ports = {port}
-            except:
-                return False, f"Некорректный порт: {part}"
-        
-        # Проверка пересечений
-        if ports & all_ports:
-            return False, f"Пересекающиеся порты в диапазоне"
-        all_ports.update(ports)
-    
-    return True, ""
-
-
-def validate_cidr(value: str) -> Tuple[bool, str]:
-    """Проверка CIDR нотации."""
-    if not value:
-        return True, ""
-    try:
-        ipaddress.IPv4Network(value, strict=False)
-        return True, ""
-    except:
-        return False, "Некорректный формат CIDR (например, 192.168.1.0/24)"
-
-
-def validate_exten_mask(value: str) -> Tuple[bool, str]:
-    """Проверка маски расширения."""
-    if not value:
-        return False, "Маска/номер не могут быть пустыми"
-    
-    # Простая проверка - номер или маска с _
-    if value.startswith('_'):
-        # Маска
-        mask = value[1:]
-        if not mask:
-            return False, "Пустая маска после '_'"
-        # Допустимые символы в маске: цифры, X, Z, N, [], .
-        pattern = r'^[0-9XZN.\[\]-]+$'
-        if not re.match(pattern, mask):
-            return False, "Недопустимые символы в маске"
-    else:
-        # Номер - только цифры
-        if not value.isdigit():
-            return False, "Номер должен содержать только цифры"
-    
-    return True, ""
-
-
-def validate_logic_bool(value: str) -> Tuple[bool, str]:
-    """Проверка логического значения."""
-    if value.lower() in ('true', 'false', 'on', 'off', 'yes', 'no', '1', '0'):
-        return True, ""
-    return False, "Допустимые значения: true/false, on/off, yes/no"
+    def reset(self):
+        """Сбрасывает все данные к значениям по умолчанию."""
+        self.__init__()
 
 
 # ============================================================================
@@ -299,36 +155,88 @@ def validate_logic_bool(value: str) -> Tuple[bool, str]:
 # ============================================================================
 
 class ConfigGenerator:
-    """Генератор конфигурационного файла."""
+    """Генерирует текст конфигурационного файла на основе ConfigData."""
     
-    def __init__(self, data: ConfigData):
-        self.data = data
+    def __init__(self, config_data: ConfigData):
+        self.data = config_data
     
     def generate(self) -> str:
-        """Генерирует полный текст конфигурационного файла."""
+        """Генерирует полный текст конфигурации."""
         lines = []
         
-        # SYSTEM (обязательная)
-        lines.append("SYSTEM {")
-        lines.append(f" HOSTNAME={self.data.system['HOSTNAME']}")
-        lines.append("}")
-        lines.append("")
+        # SYSTEM (всегда)
+        lines.extend(self._generate_system())
         
-        # NTP (необязательная)
-        if self.data.ntp:
-            lines.append("NTP {")
-            if self.data.ntp.get('IP_SRV'):
-                lines.append(f" IP_SRV={self.data.ntp['IP_SRV']}")
-            if self.data.ntp.get('INTERVAL'):
-                lines.append(f" INTERVAL={self.data.ntp['INTERVAL']}")
-            lines.append("}")
-            lines.append("")
+        # NTP (если включена)
+        if self.data.ntp_enabled:
+            lines.extend(self._generate_ntp())
         
-        # NETWORK (обязательная)
-        lines.append("NETWORK {")
+        # NETWORK (всегда, если есть интерфейсы)
+        if self.data.network['IFACE']:
+            lines.extend(self._generate_network())
+        
+        # MPLS (если включена)
+        if self.data.mpls_enabled and (self.data.mpls['MPLS_RULE_OUT'] or self.data.mpls['MPLS_RULE_IN']):
+            lines.extend(self._generate_mpls())
+        
+        # TUNNELS (если включена)
+        if self.data.tunnels_enabled:
+            lines.extend(self._generate_tunnels())
+        
+        # TC (если включена)
+        if self.data.tc_enabled and self.data.tc:
+            lines.extend(self._generate_tc())
+        
+        # IPTABLES (если включена)
+        if self.data.iptables_enabled:
+            lines.extend(self._generate_iptables())
+        
+        # IAX (если включена)
+        if self.data.iax_enabled:
+            lines.extend(self._generate_iax())
+        
+        # SIP (если включена)
+        if self.data.sip_enabled:
+            lines.extend(self._generate_sip())
+        
+        # ZAPTEL (если включена)
+        if self.data.zaptel_enabled:
+            lines.extend(self._generate_zaptel())
+        
+        # ZAPATA (если включена)
+        if self.data.zapata_enabled:
+            lines.extend(self._generate_zapata())
+        
+        # EXTENSIONS (всегда)
+        lines.extend(self._generate_extensions())
+        
+        # ALARM (если включена)
+        if self.data.alarm_enabled and self.data.alarm:
+            lines.extend(self._generate_alarm())
+        
+        return '\n'.join(lines)
+    
+    def _generate_system(self) -> List[str]:
+        lines = ['SYSTEM {']
+        lines.append(f" HOSTNAME={self.data.system.get('HOSTNAME', 'ats1')}")
+        lines.append('}')
+        return lines
+    
+    def _generate_ntp(self) -> List[str]:
+        lines = ['NTP {']
+        if self.data.ntp.get('IP_SRV'):
+            lines.append(f" IP_SRV={self.data.ntp['IP_SRV']}")
+        lines.append(f" INTERVAL={self.data.ntp.get('INTERVAL', 14400)}")
+        lines.append('}')
+        return lines
+    
+    def _generate_network(self) -> List[str]:
+        lines = ['NETWORK {']
+        
+        # IFACE
         for iface in self.data.network['IFACE']:
-            lines.append(" IFACE {")
-            lines.append(f"  IFACE_NAME={iface.get('IFACE_NAME', 'eth0')}")
+            lines.append(' IFACE {')
+            lines.append(f"  IFACE_NAME={iface.get('IFACE_NAME', '')}")
             if iface.get('IP'):
                 lines.append(f"  IP={iface['IP']}")
             if iface.get('NETMASK'):
@@ -345,10 +253,11 @@ class ConfigGenerator:
                 lines.append(f"  DUPLEX={iface['DUPLEX']}")
             if iface.get('AUTONEG'):
                 lines.append(f"  AUTONEG={iface['AUTONEG']}")
-            lines.append(" }")
+            lines.append(' }')
         
+        # ROUTE
         for route in self.data.network['ROUTE']:
-            lines.append(" ROUTE {")
+            lines.append(' ROUTE {')
             if route.get('IFACE_NAME'):
                 lines.append(f"  IFACE_NAME={route['IFACE_NAME']}")
             if route.get('NET'):
@@ -357,255 +266,82 @@ class ConfigGenerator:
                 lines.append(f"  NETMASK={route['NETMASK']}")
             if route.get('GATEWAY'):
                 lines.append(f"  GATEWAY={route['GATEWAY']}")
-            if route.get('DEFAULT_GW'):
-                lines.append(f"  DEFAULT_GW={'true' if route['DEFAULT_GW'] else 'false'}")
+            lines.append(f"  DEFAULT_GW={'true' if route.get('DEFAULT_GW') else 'false'}")
             if route.get('METRIC'):
                 lines.append(f"  METRIC={route['METRIC']}")
-            lines.append(" }")
+            lines.append(' }')
         
+        # ARP
         for arp in self.data.network['ARP']:
-            lines.append(" ARP {")
+            lines.append(' ARP {')
             if arp.get('IP'):
                 lines.append(f"  IP={arp['IP']}")
             if arp.get('MAC'):
-                lines.append(f"  MAC={arp['MAC'].lower()}")
-            lines.append(" }")
+                lines.append(f"  MAC={arp['MAC']}")
+            lines.append(' }')
         
-        lines.append("}")
-        lines.append("")
-        
-        # MPLS (необязательная)
-        if self.data.mpls['MPLS_RULE_OUT'] or self.data.mpls['MPLS_RULE_IN']:
-            lines.append("MPLS {")
-            for rule in self.data.mpls['MPLS_RULE_OUT']:
-                lines.append(" MPLS_RULE_OUT {")
-                if rule.get('IP_DEST'):
-                    lines.append(f"  IP_DEST={rule['IP_DEST']}")
-                if rule.get('LABEL'):
-                    lines.append(f"  LABEL={rule['LABEL']}")
-                if rule.get('OUT_IFACE_NAME'):
-                    lines.append(f"  OUT_IFACE_NAME={rule['OUT_IFACE_NAME']}")
-                if rule.get('IP_NEXT'):
-                    lines.append(f"  IP_NEXT={rule['IP_NEXT']}")
-                lines.append(" }")
-            
-            for rule in self.data.mpls['MPLS_RULE_IN']:
-                lines.append(" MPLS_RULE_IN {")
-                if rule.get('IN_IFACE_NAME'):
-                    lines.append(f"  IN_IFACE_NAME={rule['IN_IFACE_NAME']}")
-                if rule.get('LABEL'):
-                    lines.append(f"  LABEL={rule['LABEL']}")
-                lines.append(" }")
-            
-            lines.append("}")
-            lines.append("")
-        
-        # TUNNELS (необязательная)
-        if self.data.tunnels:
-            lines.extend(self._generate_tunnels())
-        
-        # TC (необязательная)
-        if self.data.tc:
-            lines.append("TC {")
-            for tc in self.data.tc:
-                lines.extend(self._generate_tc(tc))
-            lines.append("}")
-            lines.append("")
-        
-        # IPTABLES (необязательная)
-        if self.iptables_has_rules():
-            lines.extend(self._generate_iptables())
-        
-        # IAX (необязательная)
-        if self.data.iax['GENERAL'] or self.data.iax['IAX_ROUTE']:
-            lines.append("IAX {")
-            if self.data.iax['GENERAL']:
-                lines.append(" GENERAL {")
-                for key, val in self.data.iax['GENERAL'].items():
-                    if val is not None and val != '':
-                        if isinstance(val, bool):
-                            val = 'true' if val else 'false'
-                        lines.append(f"  {key}={val}")
-                lines.append(" }")
-            
-            for route in self.data.iax['IAX_ROUTE']:
-                lines.append(" IAX_ROUTE {")
-                for key, val in route.items():
-                    if val is not None and val != '':
-                        if isinstance(val, bool):
-                            val = 'true' if val else 'false'
-                        elif isinstance(val, list):
-                            val = ','.join(str(v) for v in val)
-                        lines.append(f"  {key}={val}")
-                lines.append(" }")
-            
-            lines.append("}")
-            lines.append("")
-        
-        # SIP (необязательная)
-        if self.data.sip['GENERAL'] or self.data.sip['PHONE']:
-            lines.append("SIP {")
-            if self.data.sip['GENERAL']:
-                lines.append(" GENERAL {")
-                for key, val in self.data.sip['GENERAL'].items():
-                    if val is not None and val != '':
-                        if isinstance(val, bool):
-                            val = 'true' if val else 'false'
-                        lines.append(f"  {key}={val}")
-                lines.append(" }")
-            
-            for phone in self.data.sip['PHONE']:
-                lines.append(" PHONE {")
-                for key, val in phone.items():
-                    if val is not None and val != '':
-                        if isinstance(val, bool):
-                            val = 'true' if val else 'false'
-                        lines.append(f"  {key}={val}")
-                lines.append(" }")
-            
-            lines.append("}")
-            lines.append("")
-        
-        # ZAPTEL (необязательная)
-        if self.zaptel_has_data():
-            lines.append("ZAPTEL {")
-            if self.data.zaptel.get('LOADZONE'):
-                lines.append(f" LOADZONE={self.data.zaptel['LOADZONE']}")
-            if self.data.zaptel.get('DEFAULTZONE'):
-                lines.append(f" DEFAULTZONE={self.data.zaptel['DEFAULTZONE']}")
-            if self.data.zaptel.get('FXOKS'):
-                lines.append(f" FXOKS=\"{self.data.zaptel['FXOKS']}\"")
-            if self.data.zaptel.get('DYNAMIC'):
-                lines.append(f" DYNAMIC=\"{self.data.zaptel['DYNAMIC']}\"")
-            
-            for e1 in self.data.zaptel['CHAN_E1']:
-                lines.append(" CHAN_E1 {")
-                if 'SPAN' in e1:
-                    span = e1['SPAN']
-                    lines.append("  SPAN {")
-                    if span.get('NUMBER'):
-                        lines.append(f"   NUMBER={span['NUMBER']}")
-                    if span.get('TIMING'):
-                        lines.append(f"   TIMING={span['TIMING']}")
-                    if span.get('LBO'):
-                        lines.append(f"   LBO={span['LBO']}")
-                    if span.get('FRAMING'):
-                        lines.append(f"   FRAMING={span['FRAMING']}")
-                    if span.get('CODING'):
-                        lines.append(f"   CODING={span['CODING']}")
-                    lines.append("  }")
-                if e1.get('BCHAN'):
-                    lines.append(f"  BCHAN=\"{e1['BCHAN']}\"")
-                if e1.get('HARDHDLC'):
-                    lines.append(f"  HARDHDLC={e1['HARDHDLC']}")
-                lines.append(" }")
-            
-            lines.append("}")
-            lines.append("")
-        
-        # ZAPATA (необязательная)
-        if self.zapata_has_data():
-            lines.append("ZAPATA {")
-            if self.data.zapata.get('CONTEXT'):
-                lines.append(f" CONTEXT={self.data.zapata['CONTEXT']}")
-            if self.data.zapata.get('SWITCHTYPE'):
-                lines.append(f" SWITCHTYPE={self.data.zapata['SWITCHTYPE']}")
-            if self.data.zapata.get('SIGNALLING'):
-                lines.append(f" SIGNALLING={self.data.zapata['SIGNALLING']}")
-            lines.append(f" ECHOCANCEL={'true' if self.data.zapata.get('ECHOCANCEL', True) else 'false'}")
-            if self.data.zapata.get('OVERLAPDIAL') is not None:
-                lines.append(f" OVERLAPDIAL={'true' if self.data.zapata['OVERLAPDIAL'] else 'false'}")
-            if self.data.zapata.get('RXGAIN'):
-                lines.append(f" RXGAIN={self.data.zapata['RXGAIN']}")
-            if self.data.zapata.get('TXGAIN'):
-                lines.append(f" TXGAIN={self.data.zapata['TXGAIN']}")
-            if self.data.zapata.get('GROUP'):
-                lines.append(f" GROUP={self.data.zapata['GROUP']}")
-            
-            for chan in self.data.zapata['CHAN']:
-                lines.append(" CHAN {")
-                for key, val in chan.items():
-                    if val is not None and val != '':
-                        lines.append(f"  {key}={val}")
-                lines.append(" }")
-            
-            lines.append("}")
-            lines.append("")
-        
-        # EXTENSIONS (обязательная)
-        lines.append("EXTENSIONS {")
-        lines.append(" GENERAL {")
-        for key, val in self.data.extensions['GENERAL'].items():
-            lines.append(f"  {key}={'true' if val else 'false'}")
-        lines.append(" }")
-        
-        if self.data.extensions['GLOBALS']:
-            lines.append(" GLOBALS {")
-            for var, value in self.data.extensions['GLOBALS']:
-                lines.append(f"  {var}={value}")
-            lines.append(" }")
-        
-        for group in self.data.extensions['EXTENGROUP']:
-            lines.append(" EXTENGROUP {")
-            lines.append(f"  NAME={group['NAME']}")
-            for exten in group.get('EXTEN', []):
-                exten_str = self._format_exten(exten)
-                lines.append(f"  EXTEN=\"{exten_str}\"")
-            lines.append(" }")
-        
-        lines.append("}")
-        lines.append("")
-        
-        # ALARM (необязательная)
-        if self.data.alarm:
-            lines.append("ALARM {")
-            for event in self.data.alarm:
-                lines.extend(self._generate_alarm_event(event))
-            lines.append("}")
-            lines.append("")
-        
-        return '\n'.join(lines)
+        lines.append('}')
+        return lines
     
-    def _format_exten(self, exten: dict) -> str:
-        """Форматирует строку EXTEN."""
-        field1 = exten.get('field1', '')
-        field2 = exten.get('field2', '')
-        field3 = exten.get('field3', '')
-        field4 = exten.get('field4', '')
+    def _generate_mpls(self) -> List[str]:
+        lines = ['MPLS {']
         
-        return f"{field1}:{field2}:{field3}:{field4}"
+        for rule in self.data.mpls['MPLS_RULE_OUT']:
+            lines.append(' MPLS_RULE_OUT {')
+            if rule.get('IP_DEST'):
+                lines.append(f"  IP_DEST={rule['IP_DEST']}")
+            if rule.get('LABEL'):
+                lines.append(f"  LABEL={rule['LABEL']}")
+            if rule.get('OUT_IFACE_NAME'):
+                lines.append(f"  OUT_IFACE_NAME={rule['OUT_IFACE_NAME']}")
+            if rule.get('IP_NEXT'):
+                lines.append(f"  IP_NEXT={rule['IP_NEXT']}")
+            lines.append(' }')
+        
+        for rule in self.data.mpls['MPLS_RULE_IN']:
+            lines.append(' MPLS_RULE_IN {')
+            if rule.get('IN_IFACE_NAME'):
+                lines.append(f"  IN_IFACE_NAME={rule['IN_IFACE_NAME']}")
+            if rule.get('LABEL'):
+                lines.append(f"  LABEL={rule['LABEL']}")
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
     
     def _generate_tunnels(self) -> List[str]:
-        """Генерирует секцию TUNNELS."""
-        lines = ["TUNNELS {"]
-        t = self.data.tunnels
+        lines = ['TUNNELS {']
         
-        if t.get('OPTIONS'):
-            lines.append(" OPTIONS {")
-            opts = t['OPTIONS']
-            if opts.get('PORT'):
-                lines.append(f"  PORT={opts['PORT']}")
-            if opts.get('IFACE_NAME'):
-                lines.append(f"  IFACE_NAME={opts['IFACE_NAME']}")
-            for cmd in opts.get('COMMAND', []):
-                lines.append(f"  COMMAND=\"{cmd}\"")
-            lines.append(" }")
+        # OPTIONS
+        opts = self.data.tunnels.get('OPTIONS', {})
+        lines.append(' OPTIONS {')
+        if opts.get('PORT'):
+            lines.append(f"  PORT={opts['PORT']}")
+        if opts.get('IFACE_NAME'):
+            lines.append(f"  IFACE_NAME={opts['IFACE_NAME']}")
+        for cmd in opts.get('COMMANDS', []):
+            lines.append(f'  COMMAND="{cmd}"')
+        lines.append(' }')
         
-        if t.get('DEFAULT'):
-            lines.append(" DEFAULT {")
-            d = t['DEFAULT']
-            if d.get('COMPRESS') is not None:
-                lines.append(f"  COMPRESS={'true' if d['COMPRESS'] else 'false'}")
-            if d.get('SPEED'):
-                lines.append(f"  SPEED=\"{d['SPEED']}\"")
-            lines.append(" }")
+        # DEFAULT
+        default = self.data.tunnels.get('DEFAULT', {})
+        if default.get('COMPRESS') is not None or default.get('SPEED'):
+            lines.append(' DEFAULT {')
+            if default.get('COMPRESS') is not None:
+                lines.append(f"  COMPRESS={'true' if default['COMPRESS'] else 'false'}")
+            if default.get('SPEED'):
+                lines.append(f"  SPEED={default['SPEED']}")
+            lines.append(' }')
         
-        for tun in t.get('TUN', []):
-            lines.append(" TUN {")
-            lines.append(f"  FROM={tun.get('FROM', '')}")
-            lines.append(f"  TO={tun.get('TO', '')}")
+        # TUN
+        for tun in self.data.tunnels.get('TUN', []):
+            lines.append(' TUN {')
+            if tun.get('FROM'):
+                lines.append(f"  FROM={tun['FROM']}")
+            if tun.get('TO'):
+                lines.append(f"  TO={tun['TO']}")
             if tun.get('PASSWD'):
-                lines.append(f"  PASSWD=\"{tun['PASSWD']}\"")
+                lines.append(f"  PASSWD={tun['PASSWD']}")
             if tun.get('TYPE'):
                 lines.append(f"  TYPE={tun['TYPE']}")
             if tun.get('PROTO'):
@@ -619,166 +355,570 @@ class ConfigGenerator:
             if tun.get('PERSIST') is not None:
                 lines.append(f"  PERSIST={'true' if tun['PERSIST'] else 'false'}")
             if tun.get('SPEED'):
-                lines.append(f"  SPEED=\"{tun['SPEED']}\"")
+                lines.append(f"  SPEED={tun['SPEED']}")
             
-            if tun.get('UP'):
-                lines.append("  UP {")
-                for run in tun['UP']:
-                    escaped = run.replace('"', '\\"')
-                    lines.append(f"   RUN='{escaped}'")
-                lines.append("  }")
+            # UP команды
+            for up_cmd in tun.get('UP', []):
+                lines.append(f"  UP RUN='{up_cmd}'")
             
-            if tun.get('DOWN'):
-                lines.append("  DOWN {")
-                for run in tun['DOWN']:
-                    escaped = run.replace('"', '\\"')
-                    lines.append(f"   RUN='{escaped}'")
-                lines.append("  }")
+            # DOWN команды
+            for down_cmd in tun.get('DOWN', []):
+                lines.append(f"  DOWN RUN='{down_cmd}'")
             
-            lines.append(" }")
+            lines.append(' }')
         
-        if t.get('SERVERS'):
-            lines.append(" SERVERS {")
-            for srv in t['SERVERS']:
-                lines.append(f"  NAME={srv.get('NAME', '')}")
-            lines.append(" }")
+        # SERVERS
+        for srv in self.data.tunnels.get('SERVERS', []):
+            lines.append(' SERVERS {')
+            if srv.get('NAME'):
+                lines.append(f"  NAME={srv['NAME']}")
+            lines.append(' }')
         
-        if t.get('CLIENTS'):
-            lines.append(" CLIENTS {")
-            for cli in t['CLIENTS']:
-                name = cli.get('NAME', '')
-                addr = cli.get('ADDR', '')
-                lines.append(f"  NAME={name},{addr}")
-            lines.append(" }")
+        # CLIENTS
+        for cli in self.data.tunnels.get('CLIENTS', []):
+            lines.append(' CLIENTS {')
+            if cli.get('NAME'):
+                lines.append(f"  NAME={cli['NAME']}")
+            if cli.get('ADDRESS'):
+                lines.append(f"  ADDRESS={cli['ADDRESS']}")
+            lines.append(' }')
         
-        lines.append("}")
-        lines.append("")
+        lines.append('}')
         return lines
     
-    def _generate_tc(self, tc: dict) -> List[str]:
-        """Генерирует подсекцию TC."""
-        lines = []
-        lines.append(" QDISC {")
-        lines.append(f"  IFACE_NAME={tc.get('IFACE_NAME', 'eth0')}")
-        lines.append(f"  TYPE={tc.get('TYPE', 'htb')}")
-        if tc.get('DEFAULT_CLASS'):
-            lines.append(f"  DEFAULT_CLASS={tc['DEFAULT_CLASS']}")
-        if tc.get('RATE'):
-            lines.append(f"  RATE={tc['RATE']}")
+    def _generate_tc(self) -> List[str]:
+        lines = ['TC {']
         
-        for cls in tc.get('CLASSES', []):
-            lines.append("  CLASSES {")
-            if cls.get('CLASSID'):
-                lines.append(f"   CLASSID={cls['CLASSID']}")
-            if cls.get('RATE'):
-                lines.append(f"   RATE={cls['RATE']}")
-            if cls.get('DISCIPLINE'):
-                lines.append(f"   DISCIPLINE={cls['DISCIPLINE']}")
-            lines.append("  }")
+        for qdisc in self.data.tc:
+            lines.append(' QDISC {')
+            if qdisc.get('IFACE_NAME'):
+                lines.append(f"  IFACE_NAME={qdisc['IFACE_NAME']}")
+            if qdisc.get('DISCIPLINE'):
+                lines.append(f"  DISCIPLINE={qdisc['DISCIPLINE']}")
+            if qdisc.get('RATE'):
+                lines.append(f"  RATE={qdisc['RATE']}")
+            if qdisc.get('DEFAULT_CLASS'):
+                lines.append(f"  DEFAULT_CLASS={qdisc['DEFAULT_CLASS']}")
+            
+            # CLASSES
+            for cls in qdisc.get('CLASSES', []):
+                lines.append('  CLASSES {')
+                if cls.get('CLASSID'):
+                    lines.append(f"   CLASSID={cls['CLASSID']}")
+                if cls.get('RATE'):
+                    lines.append(f"   RATE={cls['RATE']}")
+                if cls.get('DISCIPLINE'):
+                    lines.append(f"   DISCIPLINE={cls['DISCIPLINE']}")
+                lines.append('  }')
+            
+            # FILTER
+            for flt in qdisc.get('FILTER', []):
+                lines.append('  FILTER {')
+                if flt.get('TAG'):
+                    lines.append(f"   TAG={flt['TAG']}")
+                if flt.get('FLOWID'):
+                    lines.append(f"   FLOWID={flt['FLOWID']}")
+                lines.append('  }')
+            
+            lines.append(' }')
         
-        for filt in tc.get('FILTER', []):
-            lines.append("  FILTER {")
-            if filt.get('TAG'):
-                lines.append(f"   TAG=\"{filt['TAG']}\"")
-            if filt.get('FLOWID'):
-                lines.append(f"   FLOWID={filt['FLOWID']}")
-            lines.append("  }")
-        
-        lines.append(" }")
+        lines.append('}')
         return lines
-    
-    def iptables_has_rules(self) -> bool:
-        """Проверяет есть ли правила iptables."""
-        for chain in ['INPUT', 'OUTPUT', 'FORWARD', 'PREROUTING', 'POSTROUTING']:
-            if self.data.iptables.get(chain, []):
-                return True
-        if self.data.iptables.get('CHAIN', []):
-            return True
-        return False
     
     def _generate_iptables(self) -> List[str]:
-        """Генерирует секцию IPTABLES."""
-        lines = ["IPTABLES {"]
+        lines = ['IPTABLES {']
         
         for chain_name in ['INPUT', 'OUTPUT', 'FORWARD', 'PREROUTING', 'POSTROUTING']:
             rules = self.data.iptables.get(chain_name, [])
-            if rules:
-                lines.append(f" {chain_name} {{")
-                for rule in rules:
-                    lines.append("  RULE {")
-                    for key, val in rule.items():
-                        if val is not None and val != '':
-                            lines.append(f"   {key}={val}")
-                    lines.append("  }")
-                lines.append(" }")
+            for rule in rules:
+                lines.append(f' {chain_name} {{')
+                if rule.get('ACTION'):
+                    lines.append(f"  ACTION={rule['ACTION']}")
+                if rule.get('PROTOCOL'):
+                    lines.append(f"  PROTOCOL={rule['PROTOCOL']}")
+                if rule.get('SPORT'):
+                    lines.append(f"  SPORT={rule['SPORT']}")
+                if rule.get('DPORT'):
+                    lines.append(f"  DPORT={rule['DPORT']}")
+                if rule.get('IN_IFACE_NAME'):
+                    lines.append(f"  IN_IFACE_NAME={rule['IN_IFACE_NAME']}")
+                if rule.get('OUT_IFACE_NAME'):
+                    lines.append(f"  OUT_IFACE_NAME={rule['OUT_IFACE_NAME']}")
+                if rule.get('SADDR'):
+                    lines.append(f"  SADDR={rule['SADDR']}")
+                if rule.get('DADDR'):
+                    lines.append(f"  DADDR={rule['DADDR']}")
+                if rule.get('MATCH'):
+                    lines.append(f"  MATCH={rule['MATCH']}")
+                if rule.get('MATCH_PARAMS'):
+                    lines.append(f"  MATCH_PARAMS={rule['MATCH_PARAMS']}")
+                if rule.get('ICMP_TYPE'):
+                    lines.append(f"  ICMP_TYPE={rule['ICMP_TYPE']}")
+                if rule.get('TO_DEST'):
+                    lines.append(f"  TO_DEST={rule['TO_DEST']}")
+                if rule.get('SOURCE_TO'):
+                    lines.append(f"  SOURCE_TO={rule['SOURCE_TO']}")
+                if rule.get('EVENT'):
+                    lines.append(f"  EVENT={rule['EVENT']}")
+                if rule.get('GOTO'):
+                    lines.append(f"  GOTO={rule['GOTO']}")
+                lines.append(' }')
         
+        # Пользовательские цепочки
         for chain in self.data.iptables.get('CHAIN', []):
-            lines.append(f" CHAIN {{")
+            lines.append(f' CHAIN {{')
             if chain.get('NAME'):
                 lines.append(f"  NAME={chain['NAME']}")
             for rule in chain.get('RULES', []):
-                lines.append("  RULE {")
-                for key, val in rule.items():
-                    if val is not None and val != '':
-                        lines.append(f"   {key}={val}")
-                lines.append("  }")
-            lines.append(" }")
+                lines.append('  RULE {')
+                if rule.get('ACTION'):
+                    lines.append(f"   ACTION={rule['ACTION']}")
+                if rule.get('PROTOCOL'):
+                    lines.append(f"   PROTOCOL={rule['PROTOCOL']}")
+                if rule.get('DPORT'):
+                    lines.append(f"   DPORT={rule['DPORT']}")
+                lines.append('  }')
+            lines.append(' }')
         
-        lines.append("}")
-        lines.append("")
+        lines.append('}')
         return lines
     
-    def zaptel_has_data(self) -> bool:
-        """Проверяет есть ли данные в ZAPTEL."""
-        if self.data.zaptel.get('LOADZONE') or self.data.zaptel.get('DEFAULTZONE'):
-            return True
-        if self.data.zaptel.get('FXOKS') or self.data.zaptel.get('DYNAMIC'):
-            return True
-        if self.data.zaptel.get('CHAN_E1', []):
-            return True
-        return False
+    def _generate_iax(self) -> List[str]:
+        lines = ['IAX {']
+        
+        # GENERAL
+        gen = self.data.iax.get('GENERAL', {})
+        lines.append(' GENERAL {')
+        if gen.get('AUTOKILL') is not None:
+            val = gen['AUTOKILL']
+            lines.append(f"  AUTOKILL={'true' if val is True else ('false' if val is False else val)}")
+        if gen.get('BINDADDR'):
+            lines.append(f"  BINDADDR={gen['BINDADDR']}")
+        if gen.get('BANDWIDTH'):
+            lines.append(f"  BANDWIDTH={gen['BANDWIDTH']}")
+        if gen.get('CODECPRIORITY'):
+            lines.append(f"  CODECPRIORITY={gen['CODECPRIORITY']}")
+        if gen.get('JITTERBUFFER') is not None:
+            lines.append(f"  JITTERBUFFER={'true' if gen['JITTERBUFFER'] else 'false'}")
+        if gen.get('FORCEJITTERBUFFER') is not None:
+            lines.append(f"  FORCEJITTERBUFFER={'true' if gen['FORCEJITTERBUFFER'] else 'false'}")
+        if gen.get('MAXJITTERBUFFER'):
+            lines.append(f"  MAXJITTERBUFFER={gen['MAXJITTERBUFFER']}")
+        if gen.get('MAXJITTERINTERPS'):
+            lines.append(f"  MAXJITTERINTERPS={gen['MAXJITTERINTERPS']}")
+        if gen.get('RESYNCTHRESHOLD'):
+            lines.append(f"  RESYNCTHRESHOLD={gen['RESYNCTHRESHOLD']}")
+        lines.append(' }')
+        
+        # IAX_ROUTE
+        for route in self.data.iax.get('IAX_ROUTE', []):
+            lines.append(' IAX_ROUTE {')
+            if route.get('NAME'):
+                lines.append(f"  NAME={route['NAME']}")
+            if route.get('TYPE'):
+                lines.append(f"  TYPE={route['TYPE']}")
+            if route.get('HOST'):
+                lines.append(f"  HOST={route['HOST']}")
+            if route.get('CONTEXT'):
+                lines.append(f"  CONTEXT={route['CONTEXT']}")
+            if route.get('TRUNK') is not None:
+                lines.append(f"  TRUNK={'true' if route['TRUNK'] else 'false'}")
+            if route.get('TRUNKFREQ'):
+                lines.append(f"  TRUNKFREQ={route['TRUNKFREQ']}")
+            if route.get('QUALIFY') is not None:
+                val = route['QUALIFY']
+                lines.append(f"  QUALIFY={'true' if val is True else ('false' if val is False else val)}")
+            if route.get('QUALIFYFREQOK'):
+                lines.append(f"  QUALIFYFREQOK={route['QUALIFYFREQOK']}")
+            if route.get('QUALIFYFREQNOTOK'):
+                lines.append(f"  QUALIFYFREQNOTOK={route['QUALIFYFREQNOTOK']}")
+            if route.get('QUALIFYSMOOTHING') is not None:
+                lines.append(f"  QUALIFYSMOOTHING={'true' if route['QUALIFYSMOOTHING'] else 'false'}")
+            if route.get('ALLOW'):
+                allow_str = ','.join(route['ALLOW']) if isinstance(route['ALLOW'], list) else route['ALLOW']
+                lines.append(f"  ALLOW={allow_str}")
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
     
-    def zapata_has_data(self) -> bool:
-        """Проверяет есть ли данные в ZAPATA."""
+    def _generate_sip(self) -> List[str]:
+        lines = ['SIP {']
+        
+        # GENERAL
+        gen = self.data.sip.get('GENERAL', {})
+        lines.append(' GENERAL {')
+        if gen.get('CONTEXT'):
+            lines.append(f"  CONTEXT={gen['CONTEXT']}")
+        if gen.get('ALLOWOVERLAP') is not None:
+            lines.append(f"  ALLOWOVERLAP={'true' if gen['ALLOWOVERLAP'] else 'false'}")
+        if gen.get('BINDPORT'):
+            lines.append(f"  BINDPORT={gen['BINDPORT']}")
+        if gen.get('BINDADDR'):
+            lines.append(f"  BINDADDR={gen['BINDADDR']}")
+        if gen.get('SRVLOOKUP') is not None:
+            lines.append(f"  SRVLOOKUP={'true' if gen['SRVLOOKUP'] else 'false'}")
+        if gen.get('DISALLOW'):
+            lines.append(f"  DISALLOW={gen['DISALLOW']}")
+        if gen.get('ALLOW'):
+            lines.append(f"  ALLOW={gen['ALLOW']}")
+        if gen.get('REGISTER'):
+            lines.append(f"  REGISTER={gen['REGISTER']}")
+        if gen.get('CANREINVITE') is not None:
+            lines.append(f"  CANREINVITE={'true' if gen['CANREINVITE'] else 'false'}")
+        if gen.get('INSECURE'):
+            lines.append(f"  INSECURE={gen['INSECURE']}")
+        lines.append(' }')
+        
+        # PHONE
+        for phone in self.data.sip.get('PHONE', []):
+            lines.append(' PHONE {')
+            if phone.get('NUMBER'):
+                lines.append(f"  NUMBER={phone['NUMBER']}")
+            if phone.get('TYPE'):
+                lines.append(f"  TYPE={phone['TYPE']}")
+            if phone.get('USERNAME'):
+                lines.append(f"  USERNAME={phone['USERNAME']}")
+            if phone.get('SECRET'):
+                lines.append(f"  SECRET={phone['SECRET']}")
+            if phone.get('HOST'):
+                lines.append(f"  HOST={phone['HOST']}")
+            if phone.get('CONTEXT'):
+                lines.append(f"  CONTEXT={phone['CONTEXT']}")
+            if phone.get('DISALLOW'):
+                lines.append(f"  DISALLOW={phone['DISALLOW']}")
+            if phone.get('ALLOW'):
+                lines.append(f"  ALLOW={phone['ALLOW']}")
+            if phone.get('CANREINVITE') is not None:
+                lines.append(f"  CANREINVITE={'true' if phone['CANREINVITE'] else 'false'}")
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
+    
+    def _generate_zaptel(self) -> List[str]:
+        lines = ['ZAPTEL {']
+        
+        if self.data.zaptel.get('LOADZONE'):
+            lines.append(f" LOADZONE={self.data.zaptel['LOADZONE']}")
+        if self.data.zaptel.get('DEFAULTZONE'):
+            lines.append(f" DEFAULTZONE={self.data.zaptel['DEFAULTZONE']}")
+        if self.data.zaptel.get('FXOKS'):
+            lines.append(f" FXOKS={self.data.zaptel['FXOKS']}")
+        if self.data.zaptel.get('DYNAMIC'):
+            lines.append(f" DYNAMIC={self.data.zaptel['DYNAMIC']}")
+        
+        # CHAN_E1
+        for e1 in self.data.zaptel.get('CHAN_E1', []):
+            lines.append(' CHAN_E1 {')
+            
+            span = e1.get('SPAN', {})
+            if span:
+                lines.append('  SPAN {')
+                if span.get('NUMBER'):
+                    lines.append(f"   NUMBER={span['NUMBER']}")
+                if span.get('TIMING') is not None:
+                    lines.append(f"   TIMING={span['TIMING']}")
+                if span.get('LBO') is not None:
+                    lines.append(f"   LBO={span['LBO']}")
+                if span.get('FRAMING'):
+                    lines.append(f"   FRAMING={span['FRAMING']}")
+                if span.get('CODING'):
+                    lines.append(f"   CODING={span['CODING']}")
+                lines.append('  }')
+            
+            if e1.get('BCHAN'):
+                lines.append(f"  BCHAN={e1['BCHAN']}")
+            if e1.get('HARDHDLC'):
+                lines.append(f"  HARDHDLC={e1['HARDHDLC']}")
+            
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
+    
+    def _generate_zapata(self) -> List[str]:
+        lines = ['ZAPATA {']
+        
         if self.data.zapata.get('CONTEXT'):
-            return True
+            lines.append(f" CONTEXT={self.data.zapata['CONTEXT']}")
+        if self.data.zapata.get('SWITCHTYPE'):
+            lines.append(f" SWITCHTYPE={self.data.zapata['SWITCHTYPE']}")
         if self.data.zapata.get('SIGNALLING'):
-            return True
-        if self.data.zapata.get('CHAN', []):
-            return True
+            lines.append(f" SIGNALLING={self.data.zapata['SIGNALLING']}")
+        if self.data.zapata.get('ECHOCANCEL') is not None:
+            lines.append(f" ECHOCANCEL={'true' if self.data.zapata['ECHOCANCEL'] else 'false'}")
+        if self.data.zapata.get('OVERLAPDIAL') is not None:
+            lines.append(f" OVERLAPDIAL={'true' if self.data.zapata['OVERLAPDIAL'] else 'false'}")
+        if self.data.zapata.get('RXGAIN'):
+            lines.append(f" RXGAIN={self.data.zapata['RXGAIN']}")
+        if self.data.zapata.get('TXGAIN'):
+            lines.append(f" TXGAIN={self.data.zapata['TXGAIN']}")
+        if self.data.zapata.get('GROUP'):
+            lines.append(f" GROUP={self.data.zapata['GROUP']}")
+        
+        # CHAN
+        for chan in self.data.zapata.get('CHAN', []):
+            lines.append(' CHAN {')
+            if chan.get('CONTEXT'):
+                lines.append(f"  CONTEXT={chan['CONTEXT']}")
+            if chan.get('GROUP'):
+                lines.append(f"  GROUP={chan['GROUP']}")
+            if chan.get('SIGNALLING'):
+                lines.append(f"  SIGNALLING={chan['SIGNALLING']}")
+            if chan.get('RXGAIN'):
+                lines.append(f"  RXGAIN={chan['RXGAIN']}")
+            if chan.get('TXGAIN'):
+                lines.append(f"  TXGAIN={chan['TXGAIN']}")
+            if chan.get('CALLERID'):
+                lines.append(f"  CALLERID={chan['CALLERID']}")
+            if chan.get('CHANNEL'):
+                lines.append(f"  CHANNEL={chan['CHANNEL']}")
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
+    
+    def _generate_extensions(self) -> List[str]:
+        lines = ['EXTENSIONS {']
+        
+        # GENERAL
+        gen = self.data.extensions.get('GENERAL', {})
+        lines.append(' GENERAL {')
+        lines.append(f"  STATIC={'true' if gen.get('STATIC') else 'false'}")
+        lines.append(f"  WRITEPROTECT={'true' if gen.get('WRITEPROTECT') else 'false'}")
+        lines.append(f"  CLEARGLOBALVARS={'true' if gen.get('CLEARGLOBALVARS') else 'false'}")
+        lines.append(f"  AUTOFALLTHROUGH={'true' if gen.get('AUTOFALLTHROUGH') else 'false'}")
+        lines.append(' }')
+        
+        # GLOBALS
+        for glob in self.data.extensions.get('GLOBALS', []):
+            if glob.get('VAR') and glob.get('VALUE'):
+                lines.append(f" {glob['VAR']}={glob['VALUE']}")
+        
+        # EXTENGROUP
+        for group in self.data.extensions.get('EXTENGROUP', []):
+            lines.append(' EXTENGROUP {')
+            if group.get('NAME'):
+                lines.append(f"  NAME={group['NAME']}")
+            
+            for exten in group.get('EXTEN', []):
+                field1 = exten.get('field1', '')
+                field2 = exten.get('field2', '')
+                field3 = exten.get('field3', '')
+                field4 = exten.get('field4', '')
+                
+                exten_str = f"{field1}:{field2}"
+                if field3:
+                    exten_str += f":{field3}"
+                if field4:
+                    exten_str += f":{field4}"
+                
+                lines.append(f'  EXTEN="{exten_str}"')
+            
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
+    
+    def _generate_alarm(self) -> List[str]:
+        lines = ['ALARM {']
+        
+        for event in self.data.alarm:
+            lines.append(' EVENT {')
+            if event.get('NAME'):
+                lines.append(f"  NAME={event['NAME']}")
+            if event.get('SADDR'):
+                lines.append(f"  SADDR={event['SADDR']}")
+            if event.get('CLOSE_RELE'):
+                lines.append(f"  CLOSE_RELE={event['CLOSE_RELE']}")
+            if event.get('OPEN_RELE'):
+                lines.append(f"  OPEN_RELE={event['OPEN_RELE']}")
+            if event.get('SEND_TO_IP'):
+                lines.append(f"  SEND_TO_IP={event['SEND_TO_IP']}")
+            
+            # LOG реакции
+            for log in event.get('LOG', []):
+                lines.append('  LOG {')
+                if log.get('NAME'):
+                    lines.append(f"   NAME={log['NAME']}")
+                if log.get('STRING'):
+                    lines.append(f"   STRING={log['STRING']}")
+                lines.append('  }')
+            
+            # INDICATOR реакции
+            for ind in event.get('INDICATOR', []):
+                lines.append('  INDICATOR {')
+                if ind.get('NAME'):
+                    lines.append(f"   NAME={ind['NAME']}")
+                if ind.get('COLOR'):
+                    lines.append(f"   COLOR={ind['COLOR']}")
+                if ind.get('FREQUENCY'):
+                    lines.append(f"   FREQUENCY={ind['FREQUENCY']}")
+                lines.append('  }')
+            
+            lines.append(' }')
+        
+        lines.append('}')
+        return lines
+
+
+# ============================================================================
+# ФУНКЦИИ ВАЛИДАЦИИ
+# ============================================================================
+
+def validate_ipv4(ip: str) -> bool:
+    """Проверяет корректность IPv4 адреса."""
+    if not ip:
         return False
     
-    def _generate_alarm_event(self, event: dict) -> List[str]:
-        """Генерирует событие ALARM."""
-        lines = [" EVENT {"]
-        if event.get('NAME'):
-            lines.append(f"  NAME={event['NAME']}")
-        if event.get('SADDR'):
-            lines.append(f"  SADDR={event['SADDR']}")
-        if event.get('CLOSE_RELE'):
-            lines.append(f"  CLOSE_RELE={event['CLOSE_RELE']}")
-        if event.get('OPEN_RELE'):
-            lines.append(f"  OPEN_RELE={event['OPEN_RELE']}")
-        if event.get('SEND_TO_IP'):
-            lines.append(f"  SEND_TO_IP={event['SEND_TO_IP']}")
-        
-        for log in event.get('LOG', []):
-            lines.append("  LOG {")
-            if log.get('NAME'):
-                lines.append(f"   NAME={log['NAME']}")
-            if log.get('STRING'):
-                lines.append(f"   STRING=\"{log['STRING']}\"")
-            lines.append("  }")
-        
-        for ind in event.get('INDICATOR', []):
-            lines.append("  INDICATOR {")
-            if ind.get('NAME'):
-                lines.append(f"   NAME={ind['NAME']}")
-            if ind.get('COLOR'):
-                lines.append(f"   COLOR={ind['COLOR']}")
-            if ind.get('FREQUENCY'):
-                lines.append(f"   FREQUENCY={ind['FREQUENCY']}")
-            lines.append("  }")
-        
-        lines.append(" }")
-        return lines
+    parts = ip.split('.')
+    if len(parts) != 4:
+        return False
+    
+    for part in parts:
+        if not part:
+            return False
+        # Проверка на ведущие нули (кроме самого нуля)
+        if len(part) > 1 and part[0] == '0':
+            return False
+        try:
+            num = int(part)
+            if num < 0 or num > 255:
+                return False
+        except ValueError:
+            return False
+    
+    return True
+
+
+def validate_netmask(mask: str) -> bool:
+    """Проверяет корректность маски подсети."""
+    if not validate_ipv4(mask):
+        return False
+    
+    # Преобразуем в бинарный вид
+    parts = mask.split('.')
+    binary = ''.join(format(int(p), '08b') for p in parts)
+    
+    # Маска должна быть последовательностью единиц слева
+    if '01' in binary:
+        return False
+    
+    return True
+
+
+def validate_mac(mac: str) -> bool:
+    """Проверяет корректность MAC адреса."""
+    if not mac:
+        return False
+    
+    pattern = r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+    return bool(re.match(pattern, mac))
+
+
+def validate_hostname(hostname: str) -> bool:
+    """Проверяет корректность имени хоста."""
+    if not hostname:
+        return False
+    if len(hostname) > 63:
+        return False
+    
+    pattern = r'^[a-zA-Z0-9._-]+$'
+    return bool(re.match(pattern, hostname))
+
+
+def validate_iface_name(name: str) -> bool:
+    """Проверяет корректность имени интерфейса."""
+    valid_names = ['eth0', 'eth1']
+    for i in range(10):
+        valid_names.append(f'eth0:{i}')
+        valid_names.append(f'eth1:{i}')
+    
+    return name in valid_names
+
+
+def validate_port_range(port_range: str, min_port: int = 1, max_port: int = 65535) -> bool:
+    """Проверяет диапазон портов вида '1-15,17-31'."""
+    if not port_range:
+        return False
+    
+    parts = port_range.split(',')
+    all_ports = set()
+    
+    for part in parts:
+        part = part.strip()
+        if '-' in part:
+            start, end = part.split('-')
+            try:
+                start_port = int(start)
+                end_port = int(end)
+                if start_port < min_port or end_port > max_port or start_port > end_port:
+                    return False
+                ports = set(range(start_port, end_port + 1))
+                if ports & all_ports:
+                    return False  # Пересечение
+                all_ports.update(ports)
+            except ValueError:
+                return False
+        else:
+            try:
+                port = int(part)
+                if port < min_port or port > max_port:
+                    return False
+                if port in all_ports:
+                    return False  # Дубликат
+                all_ports.add(port)
+            except ValueError:
+                return False
+    
+    return True
+
+
+def validate_cidr(cidr: str) -> bool:
+    """Проверяет CIDR нотацию (например, 192.168.1.0/24)."""
+    if not cidr:
+        return False
+    
+    parts = cidr.split('/')
+    if len(parts) != 2:
+        return False
+    
+    ip, prefix = parts
+    if not validate_ipv4(ip):
+        return False
+    
+    try:
+        prefix_num = int(prefix)
+        if prefix_num < 0 or prefix_num > 32:
+            return False
+    except ValueError:
+        return False
+    
+    return True
+
+
+def validate_integer(value: str, min_val: int = 0, max_val: int = 65535) -> bool:
+    """Проверяет целое число в диапазоне."""
+    if not value:
+        return False
+    try:
+        num = int(value)
+        return min_val <= num <= max_val
+    except ValueError:
+        return False
+
+
+def validate_exten_mask(mask: str) -> bool:
+    """Проверяет маску расширения Asterisk."""
+    if not mask:
+        return False
+    
+    # Простая проверка: номер или маска с _
+    if mask.startswith('_'):
+        # Маска может содержать X, Z, N, [, ], ., цифры
+        pattern = r'^_[XZN0-9.\[\]-]+$'
+        return bool(re.match(pattern, mask))
+    else:
+        # Просто номер
+        return mask.isdigit() or bool(re.match(r'^[0-9*#]+$', mask))
