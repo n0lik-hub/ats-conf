@@ -9,30 +9,7 @@ from tkinter import messagebox, filedialog
 import sys
 from typing import Dict, List, Any, Optional
 
-from config_master import ConfigData, ConfigGenerator
-
-
-# ============================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ============================================================================
-
-def create_labeled_entry(parent, label_text: str, tooltip: str = "", default: str = "", width: int = 200):
-    """Создаёт подписанное поле ввода с подсказкой."""
-    frame = ctk.CTkFrame(parent)
-    
-    label = ctk.CTkLabel(frame, text=label_text, width=150, anchor="w")
-    label.pack(side="left", padx=5)
-    
-    entry = ctk.CTkEntry(frame, width=width)
-    if default:
-        entry.insert(0, default)
-    entry.pack(side="left", padx=5)
-    
-    if tooltip:
-        Tooltip(entry, tooltip)
-        Tooltip(label, tooltip)
-    
-    return frame, entry
+from config_master import ConfigData, ConfigGenerator, validate_ipv4, validate_netmask, validate_mac, validate_hostname, validate_integer
 
 
 class Tooltip:
@@ -50,9 +27,8 @@ class Tooltip:
         if self.tooltip_window or not self.text:
             return
         
-        x, y, _, _ = self.widget.bbox("insert") if hasattr(self.widget, 'bbox') else (0, 0, 0, 0)
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 25
+        x = self.widget.winfo_rootx() + 30
+        y = self.widget.winfo_rooty() + 30
         
         self.tooltip_window = tw = ctk.CTkToplevel(self.widget)
         tw.wm_overrideredirect(True)
@@ -62,8 +38,8 @@ class Tooltip:
             tw, 
             text=self.text, 
             justify="left",
-            wraplength=300,
-            font=ctk.CTkFont(size=12)
+            wraplength=350,
+            font=ctk.CTkFont(size=11)
         )
         label.pack(padx=8, pady=4)
     
@@ -72,10 +48,6 @@ class Tooltip:
             self.tooltip_window.destroy()
             self.tooltip_window = None
 
-
-# ============================================================================
-# БАЗОВЫЙ КЛАСС СТРАНИЦЫ
-# ============================================================================
 
 class Page(ctk.CTkScrollableFrame):
     """Базовый класс для всех страниц мастера."""
@@ -106,10 +78,6 @@ class Page(ctk.CTkScrollableFrame):
         return self.error_messages
 
 
-# ============================================================================
-# СТРАНИЦА SYSTEM (обязательная, страница 1)
-# ============================================================================
-
 class SystemPage(Page):
     """Страница SYSTEM (обязательная)."""
     
@@ -131,11 +99,10 @@ class SystemPage(Page):
         )
         desc.pack(pady=10)
         
-        # Поле HOSTNAME
         hostname_frame = ctk.CTkFrame(self)
-        hostname_frame.pack(pady=20)
+        hostname_frame.pack(pady=30)
         
-        ctk.CTkLabel(hostname_frame, text="Имя хоста (HOSTNAME):", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10)
+        ctk.CTkLabel(hostname_frame, text="Имя хоста (HOSTNAME):", font=ctk.CTkFont(weight="bold"), width=200).pack(side="left", padx=10)
         
         self.hostname_entry = ctk.CTkEntry(hostname_frame, width=300)
         self.hostname_entry.insert(0, config_data.system.get('HOSTNAME', 'ats1'))
@@ -155,24 +122,14 @@ class SystemPage(Page):
             self.hostname_entry.configure(border_color="red")
             return False
         
-        if len(hostname) > 63:
-            self.error_messages.append("Имя хоста не должно превышать 63 символа")
-            self.hostname_entry.configure(border_color="red")
-            return False
-        
-        import re
-        if not re.match(r'^[a-zA-Z0-9._-]+$', hostname):
-            self.error_messages.append("Имя хоста должно содержать только латиницу, цифры, и символы _-.")
+        if not validate_hostname(hostname):
+            self.error_messages.append("Имя хоста должно содержать только латиницу, цифры, и символы _-. и не более 63 символов")
             self.hostname_entry.configure(border_color="red")
             return False
         
         self.hostname_entry.configure(border_color="green")
         return True
 
-
-# ============================================================================
-# СТРАНИЦА NTP (необязательная, страница 2)
-# ============================================================================
 
 class NtpPage(Page):
     """Страница NTP (необязательная)."""
@@ -187,7 +144,6 @@ class NtpPage(Page):
         title = ctk.CTkLabel(self, text="Синхронизация времени (NTP)", font=ctk.CTkFont(size=20, weight="bold"))
         title.pack(pady=20)
         
-        # Флажок включения
         self.enabled_var = ctk.BooleanVar(value=config_data.ntp_enabled)
         self.enabled_cb = ctk.CTkCheckBox(
             self, 
@@ -197,31 +153,29 @@ class NtpPage(Page):
         )
         self.enabled_cb.pack(pady=10)
         
-        # Поля ввода
         fields_frame = ctk.CTkFrame(self)
-        fields_frame.pack(pady=10)
+        fields_frame.pack(pady=10, fill="x", padx=50)
         
-        _, self.ip_srv_entry = create_labeled_entry(
-            fields_frame, 
-            "IP сервера NTP:", 
-            tooltip="IPv4 адрес NTP сервера. Пример: 192.168.1.1",
-            default=config_data.ntp.get('IP_SRV', ''),
-            width=200
-        )
+        ip_frame = ctk.CTkFrame(fields_frame)
+        ip_frame.pack(fill="x", pady=5)
+        ctk.CTkLabel(ip_frame, text="IP сервера NTP:", width=150).pack(side="left", padx=5)
+        self.ip_srv_entry = ctk.CTkEntry(ip_frame, width=200)
+        self.ip_srv_entry.insert(0, config_data.ntp.get('IP_SRV', ''))
+        self.ip_srv_entry.pack(side="left", padx=5)
+        Tooltip(self.ip_srv_entry, "IPv4 адрес NTP сервера. Пример: 192.168.1.1")
         
-        _, self.interval_entry = create_labeled_entry(
-            fields_frame,
-            "Интервал опроса (сек):",
-            tooltip="Интервал синхронизации в секундах (60-86400). По умолчанию 14400.",
-            default=str(config_data.ntp.get('INTERVAL', 14400)),
-            width=100
-        )
+        interval_frame = ctk.CTkFrame(fields_frame)
+        interval_frame.pack(fill="x", pady=5)
+        ctk.CTkLabel(interval_frame, text="Интервал опроса (сек):", width=150).pack(side="left", padx=5)
+        self.interval_entry = ctk.CTkEntry(interval_frame, width=100)
+        self.interval_entry.insert(0, str(config_data.ntp.get('INTERVAL', 14400)))
+        self.interval_entry.pack(side="left", padx=5)
+        Tooltip(self.interval_entry, "Интервал синхронизации в секундах (60-86400). По умолчанию 14400.")
         
         self.fields = [self.ip_srv_entry, self.interval_entry]
         self._toggle_fields()
     
     def _toggle_fields(self):
-        """Включает/выключает поля ввода."""
         state = "normal" if self.enabled_var.get() else "disabled"
         for entry in self.fields:
             entry.configure(state=state)
@@ -240,8 +194,6 @@ class NtpPage(Page):
         if not self.enabled_var.get():
             return True
         
-        from config_master import validate_ipv4, validate_integer
-        
         ip_srv = self.ip_srv_entry.get().strip()
         if not ip_srv or not validate_ipv4(ip_srv):
             self.error_messages.append("Некорректный IP адрес NTP сервера")
@@ -257,10 +209,6 @@ class NtpPage(Page):
         return True
 
 
-# ============================================================================
-# СТРАНИЦА NETWORK (обязательная, страница 3)
-# ============================================================================
-
 class NetworkPage(Page):
     """Страница NETWORK (обязательная)."""
     
@@ -274,7 +222,6 @@ class NetworkPage(Page):
         title = ctk.CTkLabel(self, text="Сетевые настройки (NETWORK)", font=ctk.CTkFont(size=20, weight="bold"))
         title.pack(pady=10)
         
-        # Вкладки
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
         
@@ -282,16 +229,17 @@ class NetworkPage(Page):
         self.route_tab = self.tabview.add("Маршруты")
         self.arp_tab = self.tabview.add("ARP")
         
-        # Интерфейсы
+        self.iface_entries = []
+        self.route_entries = []
+        self.arp_entries = []
+        
         self._setup_iface_tab()
         self._setup_route_tab()
         self._setup_arp_tab()
         
-        # Загрузка данных
-        self._load_data()
+        self.after(100, self._load_data)
     
     def _setup_iface_tab(self):
-        """Настройка вкладки интерфейсов."""
         btn_frame = ctk.CTkFrame(self.iface_tab)
         btn_frame.pack(fill="x", padx=10, pady=5)
         
@@ -300,11 +248,8 @@ class NetworkPage(Page):
         
         self.ifaces_frame = ctk.CTkScrollableFrame(self.iface_tab)
         self.ifaces_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.iface_entries = []
     
     def _setup_route_tab(self):
-        """Настройка вкладки маршрутов."""
         btn_frame = ctk.CTkFrame(self.route_tab)
         btn_frame.pack(fill="x", padx=10, pady=5)
         
@@ -313,11 +258,8 @@ class NetworkPage(Page):
         
         self.routes_frame = ctk.CTkScrollableFrame(self.route_tab)
         self.routes_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.route_entries = []
     
     def _setup_arp_tab(self):
-        """Настройка вкладки ARP."""
         btn_frame = ctk.CTkFrame(self.arp_tab)
         btn_frame.pack(fill="x", padx=10, pady=5)
         
@@ -326,11 +268,8 @@ class NetworkPage(Page):
         
         self.arps_frame = ctk.CTkScrollableFrame(self.arp_tab)
         self.arps_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.arp_entries = []
     
     def _add_iface(self):
-        """Добавляет новый интерфейс."""
         frame = ctk.CTkFrame(self.ifaces_frame)
         frame.pack(fill="x", pady=5)
         
@@ -339,340 +278,279 @@ class NetworkPage(Page):
         # Имя интерфейса
         iface_names = ['eth0', 'eth1'] + [f'eth0:{i}' for i in range(10)] + [f'eth1:{i}' for i in range(10)]
         
-        name_frame = ctk.CTkFrame(frame)
-        name_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(name_frame, text="Интерфейс:", width=100).pack(side="left")
-        entry_data['name'] = ctk.CTkComboBox(name_frame, values=iface_names, width=100)
+        row1 = ctk.CTkFrame(frame)
+        row1.pack(fill="x", pady=2)
+        ctk.CTkLabel(row1, text="Интерфейс:", width=100).pack(side="left", padx=5)
+        entry_data['name'] = ctk.CTkComboBox(row1, values=iface_names, width=100)
         entry_data['name'].set('eth0')
         entry_data['name'].pack(side="left", padx=5)
         Tooltip(entry_data['name'], "Имя сетевого интерфейса")
         
-        # IP
-        ip_frame = ctk.CTkFrame(frame)
-        ip_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(ip_frame, text="IP адрес:", width=100).pack(side="left")
-        entry_data['ip'] = ctk.CTkEntry(ip_frame, width=150)
+        row2 = ctk.CTkFrame(frame)
+        row2.pack(fill="x", pady=2)
+        ctk.CTkLabel(row2, text="IP адрес:", width=100).pack(side="left", padx=5)
+        entry_data['ip'] = ctk.CTkEntry(row2, width=150)
         entry_data['ip'].pack(side="left", padx=5)
         Tooltip(entry_data['ip'], "IPv4 адрес интерфейса")
         
-        # NETMASK
-        mask_frame = ctk.CTkFrame(frame)
-        mask_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(mask_frame, text="Маска:", width=100).pack(side="left")
-        entry_data['netmask'] = ctk.CTkEntry(mask_frame, width=150)
+        ctk.CTkLabel(row2, text="Маска:", width=60).pack(side="left", padx=5)
+        entry_data['netmask'] = ctk.CTkEntry(row2, width=150)
         entry_data['netmask'].insert(0, '255.255.255.0')
         entry_data['netmask'].pack(side="left", padx=5)
         Tooltip(entry_data['netmask'], "Маска подсети")
         
-        # BROADCAST
-        bc_frame = ctk.CTkFrame(frame)
-        bc_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(bc_frame, text="Broadcast:", width=100).pack(side="left")
-        entry_data['broadcast'] = ctk.CTkEntry(bc_frame, width=150)
+        row3 = ctk.CTkFrame(frame)
+        row3.pack(fill="x", pady=2)
+        ctk.CTkLabel(row3, text="Broadcast:", width=100).pack(side="left", padx=5)
+        entry_data['broadcast'] = ctk.CTkEntry(row3, width=150)
         entry_data['broadcast'].pack(side="left", padx=5)
         Tooltip(entry_data['broadcast'], "Широковещательный адрес (опционально)")
         
-        # MTU
-        mtu_frame = ctk.CTkFrame(frame)
-        mtu_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(mtu_frame, text="MTU:", width=100).pack(side="left")
-        entry_data['mtu'] = ctk.CTkEntry(mtu_frame, width=80)
+        row4 = ctk.CTkFrame(frame)
+        row4.pack(fill="x", pady=2)
+        ctk.CTkLabel(row4, text="MTU:", width=100).pack(side="left", padx=5)
+        entry_data['mtu'] = ctk.CTkEntry(row4, width=80)
         entry_data['mtu'].insert(0, '1500')
         entry_data['mtu'].pack(side="left", padx=5)
         Tooltip(entry_data['mtu'], "Максимальный размер пакета (68-1500)")
         
-        # METRIC
-        metric_frame = ctk.CTkFrame(frame)
-        metric_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(metric_frame, text="Метрика:", width=100).pack(side="left")
-        entry_data['metric'] = ctk.CTkEntry(metric_frame, width=80)
+        ctk.CTkLabel(row4, text="Метрика:", width=70).pack(side="left", padx=5)
+        entry_data['metric'] = ctk.CTkEntry(row4, width=80)
         entry_data['metric'].insert(0, '1')
         entry_data['metric'].pack(side="left", padx=5)
         Tooltip(entry_data['metric'], "Метрика интерфейса (0-65535)")
         
-        # SPEED
-        speed_frame = ctk.CTkFrame(frame)
-        speed_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(speed_frame, text="Скорость:", width=100).pack(side="left")
-        entry_data['speed'] = ctk.CTkComboBox(speed_frame, values=['', '10', '100', '1000'], width=80)
+        row5 = ctk.CTkFrame(frame)
+        row5.pack(fill="x", pady=2)
+        ctk.CTkLabel(row5, text="Скорость:", width=100).pack(side="left", padx=5)
+        entry_data['speed'] = ctk.CTkComboBox(row5, values=['', '10', '100', '1000'], width=80)
         entry_data['speed'].pack(side="left", padx=5)
         Tooltip(entry_data['speed'], "Скорость интерфейса (опционально)")
         
-        # DUPLEX
-        duplex_frame = ctk.CTkFrame(frame)
-        duplex_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(duplex_frame, text="Дуплекс:", width=100).pack(side="left")
-        entry_data['duplex'] = ctk.CTkComboBox(duplex_frame, values=['', 'full', 'half'], width=80)
+        ctk.CTkLabel(row5, text="Дуплекс:", width=70).pack(side="left", padx=5)
+        entry_data['duplex'] = ctk.CTkComboBox(row5, values=['', 'full', 'half'], width=80)
         entry_data['duplex'].pack(side="left", padx=5)
         Tooltip(entry_data['duplex'], "Режим дуплекса (опционально)")
         
-        # AUTONEG
-        autoneg_frame = ctk.CTkFrame(frame)
-        autoneg_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(autoneg_frame, text="Автопереговоры:", width=100).pack(side="left")
-        entry_data['autoneg'] = ctk.CTkComboBox(autoneg_frame, values=['on', 'off'], width=80)
+        ctk.CTkLabel(row5, text="Автопереговоры:", width=110).pack(side="left", padx=5)
+        entry_data['autoneg'] = ctk.CTkComboBox(row5, values=['on', 'off'], width=80)
         entry_data['autoneg'].set('on')
         entry_data['autoneg'].pack(side="left", padx=5)
         Tooltip(entry_data['autoneg'], "Автосогласование скорости")
         
-        # Удалить
-        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", command=lambda: self._remove_iface(frame, entry_data))
-        del_btn.pack(side="right", padx=5)
+        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", hover_color="darkred", command=lambda f=frame, e=entry_data: self._remove_iface(f, e))
+        del_btn.pack(side="right", padx=5, pady=5)
         
         self.iface_entries.append(entry_data)
     
     def _remove_iface(self, frame, entry_data):
         frame.destroy()
-        self.iface_entries.remove(entry_data)
+        if entry_data in self.iface_entries:
+            self.iface_entries.remove(entry_data)
     
     def _add_route(self):
-        """Добавляет новый маршрут."""
         frame = ctk.CTkFrame(self.routes_frame)
         frame.pack(fill="x", pady=5)
         
         entry_data = {}
         
-        # IFACE_NAME
-        iface_names = [e['name'].get() for e in self.iface_entries] or ['eth0']
-        iface_frame = ctk.CTkFrame(frame)
-        iface_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(iface_frame, text="Интерфейс:", width=100).pack(side="left")
-        entry_data['iface'] = ctk.CTkComboBox(iface_frame, values=iface_names, width=100)
-        entry_data['iface'].set(iface_names[0])
+        iface_names = [e['name'].get() for e in self.iface_entries] if self.iface_entries else ['eth0', 'eth1']
+        
+        row1 = ctk.CTkFrame(frame)
+        row1.pack(fill="x", pady=2)
+        ctk.CTkLabel(row1, text="Интерфейс:", width=100).pack(side="left", padx=5)
+        entry_data['iface'] = ctk.CTkComboBox(row1, values=iface_names, width=100)
+        entry_data['iface'].set('eth0')
         entry_data['iface'].pack(side="left", padx=5)
+        Tooltip(entry_data['iface'], "Интерфейс для маршрута")
         
-        # NET
-        net_frame = ctk.CTkFrame(frame)
-        net_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(net_frame, text="Сеть:", width=100).pack(side="left")
-        entry_data['net'] = ctk.CTkEntry(net_frame, width=150)
+        ctk.CTkLabel(row1, text="Сеть:", width=50).pack(side="left", padx=5)
+        entry_data['net'] = ctk.CTkEntry(row1, width=150)
         entry_data['net'].pack(side="left", padx=5)
-        Tooltip(entry_data['net'], "IP сети назначения (опционально для шлюза по умолчанию)")
+        Tooltip(entry_data['net'], "IP сети (не требуется для шлюза по умолчанию)")
         
-        # NETMASK
-        mask_frame = ctk.CTkFrame(frame)
-        mask_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(mask_frame, text="Маска:", width=100).pack(side="left")
-        entry_data['netmask'] = ctk.CTkEntry(mask_frame, width=150)
+        ctk.CTkLabel(row1, text="Маска:", width=50).pack(side="left", padx=5)
+        entry_data['netmask'] = ctk.CTkEntry(row1, width=150)
+        entry_data['netmask'].insert(0, '255.255.255.0')
         entry_data['netmask'].pack(side="left", padx=5)
+        Tooltip(entry_data['netmask'], "Маска сети")
         
-        # GATEWAY
-        gw_frame = ctk.CTkFrame(frame)
-        gw_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(gw_frame, text="Шлюз:", width=100).pack(side="left")
-        entry_data['gateway'] = ctk.CTkEntry(gw_frame, width=150)
+        row2 = ctk.CTkFrame(frame)
+        row2.pack(fill="x", pady=2)
+        ctk.CTkLabel(row2, text="Шлюз:", width=100).pack(side="left", padx=5)
+        entry_data['gateway'] = ctk.CTkEntry(row2, width=150)
         entry_data['gateway'].pack(side="left", padx=5)
         Tooltip(entry_data['gateway'], "IP шлюза")
         
-        # DEFAULT_GW
-        defgw_frame = ctk.CTkFrame(frame)
-        defgw_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(defgw_frame, text="Шлюз по умолчанию:", width=100).pack(side="left")
-        entry_data['default_gw'] = ctk.CTkCheckBox(defgw_frame, text="")
-        entry_data['default_gw'].pack(side="left", padx=5)
-        Tooltip(entry_data['default_gw'], "Только один маршрут может быть шлюзом по умолчанию")
+        entry_data['default_gw'] = ctk.BooleanVar(value=False)
+        gw_cb = ctk.CTkCheckBox(row2, text="Шлюз по умолчанию", variable=entry_data['default_gw'])
+        gw_cb.pack(side="left", padx=10)
+        Tooltip(gw_cb, "Отметьте если это маршрут по умолчанию")
         
-        # METRIC
-        metric_frame = ctk.CTkFrame(frame)
-        metric_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(metric_frame, text="Метрика:", width=100).pack(side="left")
-        entry_data['metric'] = ctk.CTkEntry(metric_frame, width=80)
+        ctk.CTkLabel(row2, text="Метрика:", width=60).pack(side="left", padx=5)
+        entry_data['metric'] = ctk.CTkEntry(row2, width=80)
         entry_data['metric'].insert(0, '1')
         entry_data['metric'].pack(side="left", padx=5)
+        Tooltip(entry_data['metric'], "Метрика маршрута")
         
-        # Удалить
-        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", command=lambda: self._remove_route(frame, entry_data))
-        del_btn.pack(side="right", padx=5)
+        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", hover_color="darkred", command=lambda f=frame, e=entry_data: self._remove_route(f, e))
+        del_btn.pack(side="right", padx=5, pady=5)
         
         self.route_entries.append(entry_data)
     
     def _remove_route(self, frame, entry_data):
         frame.destroy()
-        self.route_entries.remove(entry_data)
+        if entry_data in self.route_entries:
+            self.route_entries.remove(entry_data)
     
     def _add_arp(self):
-        """Добавляет ARP запись."""
         frame = ctk.CTkFrame(self.arps_frame)
         frame.pack(fill="x", pady=5)
         
         entry_data = {}
         
-        # IP
-        ip_frame = ctk.CTkFrame(frame)
-        ip_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(ip_frame, text="IP адрес:", width=100).pack(side="left")
-        entry_data['ip'] = ctk.CTkEntry(ip_frame, width=150)
+        row1 = ctk.CTkFrame(frame)
+        row1.pack(fill="x", pady=2)
+        ctk.CTkLabel(row1, text="IP адрес:", width=100).pack(side="left", padx=5)
+        entry_data['ip'] = ctk.CTkEntry(row1, width=150)
         entry_data['ip'].pack(side="left", padx=5)
+        Tooltip(entry_data['ip'], "IP адрес для статической ARP записи")
         
-        # MAC
-        mac_frame = ctk.CTkFrame(frame)
-        mac_frame.pack(fill="x", pady=2)
-        ctk.CTkLabel(mac_frame, text="MAC адрес:", width=100).pack(side="left")
-        entry_data['mac'] = ctk.CTkEntry(mac_frame, width=150)
+        ctk.CTkLabel(row1, text="MAC адрес:", width=100).pack(side="left", padx=5)
+        entry_data['mac'] = ctk.CTkEntry(row1, width=150)
         entry_data['mac'].pack(side="left", padx=5)
-        Tooltip(entry_data['mac'], "Формат: 00:18:E7:15:A6:2B")
+        Tooltip(entry_data['mac'], "MAC адрес в формате XX:XX:XX:XX:XX:XX")
         
-        # Удалить
-        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", command=lambda: self._remove_arp(frame, entry_data))
-        del_btn.pack(side="right", padx=5)
+        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", hover_color="darkred", command=lambda f=frame, e=entry_data: self._remove_arp(f, e))
+        del_btn.pack(side="right", padx=5, pady=5)
         
         self.arp_entries.append(entry_data)
     
     def _remove_arp(self, frame, entry_data):
         frame.destroy()
-        self.arp_entries.remove(entry_data)
+        if entry_data in self.arp_entries:
+            self.arp_entries.remove(entry_data)
     
     def _load_data(self):
-        """Загружает данные из config_data."""
-        # IFACE
-        for iface in self.config_data.network.get('IFACE', []):
+        for iface in self.config_data.interfaces:
             self._add_iface()
-            if self.iface_entries:
-                e = self.iface_entries[-1]
-                e['name'].set(iface.get('IFACE_NAME', 'eth0'))
-                e['ip'].insert(0, iface.get('IP', ''))
-                e['netmask'].delete(0, 'end')
-                e['netmask'].insert(0, iface.get('NETMASK', '255.255.255.0'))
-                e['broadcast'].insert(0, iface.get('BROADCAST', ''))
-                e['mtu'].delete(0, 'end')
-                e['mtu'].insert(0, str(iface.get('MTU', 1500)))
-                e['metric'].delete(0, 'end')
-                e['metric'].insert(0, str(iface.get('METRIC', 1)))
-                e['speed'].set(iface.get('SPEED', ''))
-                e['duplex'].set(iface.get('DUPLEX', ''))
-                e['autoneg'].set(iface.get('AUTONEG', 'on'))
+            entry = self.iface_entries[-1]
+            entry['name'].set(iface.get('IFACE_NAME', 'eth0'))
+            entry['ip'].insert(0, iface.get('IP', ''))
+            entry['netmask'].delete(0, 'end')
+            entry['netmask'].insert(0, iface.get('NETMASK', '255.255.255.0'))
+            entry['broadcast'].insert(0, iface.get('BROADCAST', ''))
+            entry['mtu'].delete(0, 'end')
+            entry['mtu'].insert(0, str(iface.get('MTU', 1500)))
+            entry['metric'].delete(0, 'end')
+            entry['metric'].insert(0, str(iface.get('METRIC', 1)))
+            entry['speed'].set(iface.get('SPEED', ''))
+            entry['duplex'].set(iface.get('DUPLEX', ''))
+            entry['autoneg'].set(iface.get('AUTONEG', 'on'))
         
-        # ROUTE
-        for route in self.config_data.network.get('ROUTE', []):
+        for route in self.config_data.routes:
             self._add_route()
-            if self.route_entries:
-                e = self.route_entries[-1]
-                e['iface'].set(route.get('IFACE_NAME', 'eth0'))
-                e['net'].insert(0, route.get('NET', ''))
-                e['netmask'].insert(0, route.get('NETMASK', ''))
-                e['gateway'].insert(0, route.get('GATEWAY', ''))
-                e['default_gw'].select() if route.get('DEFAULT_GW') else e['default_gw'].deselect()
-                e['metric'].delete(0, 'end')
-                e['metric'].insert(0, str(route.get('METRIC', 1)))
+            entry = self.route_entries[-1]
+            entry['iface'].set(route.get('IFACE_NAME', 'eth0'))
+            entry['net'].insert(0, route.get('NET', ''))
+            entry['netmask'].delete(0, 'end')
+            entry['netmask'].insert(0, route.get('NETMASK', '255.255.255.0'))
+            entry['gateway'].insert(0, route.get('GATEWAY', ''))
+            entry['default_gw'].set(route.get('DEFAULT_GW', False))
+            entry['metric'].delete(0, 'end')
+            entry['metric'].insert(0, str(route.get('METRIC', 1)))
         
-        # ARP
-        for arp in self.config_data.network.get('ARP', []):
+        for arp in self.config_data.arp_entries:
             self._add_arp()
-            if self.arp_entries:
-                e = self.arp_entries[-1]
-                e['ip'].insert(0, arp.get('IP', ''))
-                e['mac'].insert(0, arp.get('MAC', ''))
+            entry = self.arp_entries[-1]
+            entry['ip'].insert(0, arp.get('IP', ''))
+            entry['mac'].insert(0, arp.get('MAC', ''))
     
     def save_data(self):
-        """Сохраняет данные в config_data."""
-        self.config_data.network['IFACE'] = []
-        for e in self.iface_entries:
+        self.config_data.interfaces = []
+        for entry in self.iface_entries:
             iface = {
-                'IFACE_NAME': e['name'].get(),
-                'IP': e['ip'].get().strip(),
-                'NETMASK': e['netmask'].get().strip(),
-                'BROADCAST': e['broadcast'].get().strip(),
-                'MTU': e['mtu'].get().strip(),
-                'METRIC': e['metric'].get().strip(),
-                'SPEED': e['speed'].get(),
-                'DUPLEX': e['duplex'].get(),
-                'AUTONEG': e['autoneg'].get()
+                'IFACE_NAME': entry['name'].get(),
+                'IP': entry['ip'].get().strip(),
+                'NETMASK': entry['netmask'].get().strip(),
+                'BROADCAST': entry['broadcast'].get().strip(),
+                'MTU': int(entry['mtu'].get().strip() or 1500),
+                'METRIC': int(entry['metric'].get().strip() or 1),
+                'SPEED': entry['speed'].get(),
+                'DUPLEX': entry['duplex'].get(),
+                'AUTONEG': entry['autoneg'].get()
             }
-            self.config_data.network['IFACE'].append(iface)
+            self.config_data.interfaces.append(iface)
         
-        self.config_data.network['ROUTE'] = []
-        for e in self.route_entries:
+        self.config_data.routes = []
+        for entry in self.route_entries:
             route = {
-                'IFACE_NAME': e['iface'].get(),
-                'NET': e['net'].get().strip(),
-                'NETMASK': e['netmask'].get().strip(),
-                'GATEWAY': e['gateway'].get().strip(),
-                'DEFAULT_GW': e['default_gw'].get(),
-                'METRIC': e['metric'].get().strip()
+                'IFACE_NAME': entry['iface'].get(),
+                'NET': entry['net'].get().strip(),
+                'NETMASK': entry['netmask'].get().strip(),
+                'GATEWAY': entry['gateway'].get().strip(),
+                'DEFAULT_GW': entry['default_gw'].get(),
+                'METRIC': int(entry['metric'].get().strip() or 1)
             }
-            self.config_data.network['ROUTE'].append(route)
+            self.config_data.routes.append(route)
         
-        self.config_data.network['ARP'] = []
-        for e in self.arp_entries:
+        self.config_data.arp_entries = []
+        for entry in self.arp_entries:
             arp = {
-                'IP': e['ip'].get().strip(),
-                'MAC': e['mac'].get().strip()
+                'IP': entry['ip'].get().strip(),
+                'MAC': entry['mac'].get().strip()
             }
-            self.config_data.network['ARP'].append(arp)
+            self.config_data.arp_entries.append(arp)
     
     def validate(self) -> bool:
-        """Проверяет корректность данных."""
         self.error_messages = []
-        from config_master import validate_ipv4, validate_netmask, validate_mac, validate_iface_name
         
-        # Проверяем что есть хотя бы один интерфейс
         if not self.iface_entries:
-            self.error_messages.append("Необходимо добавить хотя бы один сетевой интерфейс")
+            self.error_messages.append("Требуется хотя бы один сетевой интерфейс")
             return False
         
-        # Валидация интерфейсов
-        for e in self.iface_entries:
-            iface_name = e['name'].get()
-            ip = e['ip'].get().strip()
-            netmask = e['netmask'].get().strip()
-            
-            if not iface_name or not validate_iface_name(iface_name):
-                self.error_messages.append(f"Некорректное имя интерфейса: {iface_name}")
-                return False
+        for entry in self.iface_entries:
+            ip = entry['ip'].get().strip()
+            netmask = entry['netmask'].get().strip()
             
             if not ip or not validate_ipv4(ip):
-                self.error_messages.append(f"Некорректный IP адрес: {ip}")
-                e['ip'].configure(border_color="red")
+                self.error_messages.append(f"Некорректный IP адрес для интерфейса {entry['name'].get()}")
+                entry['ip'].configure(border_color="red")
                 return False
             
             if not netmask or not validate_netmask(netmask):
-                self.error_messages.append(f"Некорректная маска подсети: {netmask}")
-                e['netmask'].configure(border_color="red")
+                self.error_messages.append(f"Некорректная маска подсети для интерфейса {entry['name'].get()}")
+                entry['netmask'].configure(border_color="red")
                 return False
         
-        # Валидация маршрутов
         default_gw_count = sum(1 for e in self.route_entries if e['default_gw'].get())
         if default_gw_count > 1:
             self.error_messages.append("Только один маршрут может быть шлюзом по умолчанию")
             return False
         
-        for e in self.route_entries:
-            gateway = e['gateway'].get().strip()
-            net = e['net'].get().strip()
-            netmask = e['netmask'].get().strip()
-            
-            if gateway and not validate_ipv4(gateway):
-                self.error_messages.append(f"Некорректный IP шлюза: {gateway}")
-                return False
-            
-            if net and not validate_ipv4(net):
-                self.error_messages.append(f"Некорректный IP сети: {net}")
-                return False
-            
-            if netmask and not validate_netmask(netmask):
-                self.error_messages.append(f"Некорректная маска: {netmask}")
+        for entry in self.route_entries:
+            gateway = entry['gateway'].get().strip()
+            if not gateway or not validate_ipv4(gateway):
+                self.error_messages.append("Некорректный IP шлюза в маршруте")
+                entry['gateway'].configure(border_color="red")
                 return False
         
-        # Валидация ARP
-        for e in self.arp_entries:
-            ip = e['ip'].get().strip()
-            mac = e['mac'].get().strip()
+        for entry in self.arp_entries:
+            ip = entry['ip'].get().strip()
+            mac = entry['mac'].get().strip()
             
-            if ip and not validate_ipv4(ip):
-                self.error_messages.append(f"Некорректный IP в ARP: {ip}")
+            if not ip or not validate_ipv4(ip):
+                self.error_messages.append("Некорректный IP в ARP записи")
+                entry['ip'].configure(border_color="red")
                 return False
             
-            if mac and not validate_mac(mac):
-                self.error_messages.append(f"Некорректный MAC адрес: {mac}")
-                e['mac'].configure(border_color="red")
+            if not mac or not validate_mac(mac):
+                self.error_messages.append("Некорректный MAC адрес в ARP записи")
+                entry['mac'].configure(border_color="red")
                 return False
         
         return True
 
-
-# ============================================================================
-# СТРАНИЦА EXTENSIONS (обязательная, страница 12)
-# ============================================================================
 
 class ExtensionsPage(Page):
     """Страница EXTENSIONS (обязательная)."""
@@ -687,210 +565,256 @@ class ExtensionsPage(Page):
         title = ctk.CTkLabel(self, text="План набора (EXTENSIONS)", font=ctk.CTkFont(size=20, weight="bold"))
         title.pack(pady=10)
         
-        # GENERAL настройки
-        general_frame = ctk.CTkFrame(self)
-        general_frame.pack(fill="x", padx=20, pady=10)
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
         
-        ctk.CTkLabel(general_frame, text="Общие настройки", font=ctk.CTkFont(weight="bold")).pack()
+        self.general_tab = self.tabview.add("Общие")
+        self.contexts_tab = self.tabview.add("Контексты")
         
-        self.static_var = ctk.BooleanVar(value=config_data.extensions['GENERAL'].get('STATIC', False))
-        self.static_cb = ctk.CTkCheckBox(general_frame, text="STATIC", variable=self.static_var)
-        self.static_cb.pack(side="left", padx=10)
+        self.extension_groups = []
         
-        self.writeprotect_var = ctk.BooleanVar(value=config_data.extensions['GENERAL'].get('WRITEPROTECT', False))
-        self.writeprotect_cb = ctk.CTkCheckBox(general_frame, text="WRITEPROTECT", variable=self.writeprotect_var)
-        self.writeprotect_cb.pack(side="left", padx=10)
+        self._setup_general_tab()
+        self._setup_contexts_tab()
         
-        self.autofallthrough_var = ctk.BooleanVar(value=config_data.extensions['GENERAL'].get('AUTOFALLTHROUGH', True))
-        self.autofallthrough_cb = ctk.CTkCheckBox(general_frame, text="AUTOFALLTHROUGH", variable=self.autofallthrough_var)
-        self.autofallthrough_cb.pack(side="left", padx=10)
+        self.after(100, self._load_data)
+    
+    def _setup_general_tab(self):
+        scroll_frame = ctk.CTkScrollableFrame(self.general_tab)
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
-        # Контексты (EXTENGROUP)
-        contexts_frame = ctk.CTkFrame(self)
-        contexts_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        self.static_var = ctk.BooleanVar(value=self.config_data.extensions_general.get('STATIC', False))
+        static_cb = ctk.CTkCheckBox(scroll_frame, text="STATIC (статический контекст)", variable=self.static_var)
+        static_cb.pack(anchor="w", pady=5)
+        Tooltip(static_cb, "Если true, контекст не может быть изменён динамически")
         
-        ctk.CTkLabel(contexts_frame, text="Контексты и расширения", font=ctk.CTkFont(weight="bold")).pack()
+        self.writeprotect_var = ctk.BooleanVar(value=self.config_data.extensions_general.get('WRITEPROTECT', False))
+        writeprotect_cb = ctk.CTkCheckBox(scroll_frame, text="WRITEPROTECT (защита от записи)", variable=self.writeprotect_var)
+        writeprotect_cb.pack(anchor="w", pady=5)
+        Tooltip(writeprotect_cb, "Если true, защита от изменения через AMI")
         
-        self.contexts_list_frame = ctk.CTkScrollableFrame(contexts_frame)
-        self.contexts_list_frame.pack(fill="both", expand=True)
+        self.clearglobalvars_var = ctk.BooleanVar(value=self.config_data.extensions_general.get('CLEARGLOBALVARS', False))
+        clearglobalvars_cb = ctk.CTkCheckBox(scroll_frame, text="CLEARGLOBALVARS (очищать глобальные переменные)", variable=self.clearglobalvars_var)
+        clearglobalvars_cb.pack(anchor="w", pady=5)
+        Tooltip(clearglobalvars_cb, "Если true, очищать глобальные переменные при перезагрузке")
         
-        self.contexts = []
+        self.autofallthrough_var = ctk.BooleanVar(value=self.config_data.extensions_general.get('AUTOFALLTHROUGH', True))
+        autofallthrough_cb = ctk.CTkCheckBox(scroll_frame, text="AUTOFALLTHROUGH (автоматический переход)", variable=self.autofallthrough_var)
+        autofallthrough_cb.pack(anchor="w", pady=5)
+        Tooltip(autofallthrough_cb, "Если true, продолжать выполнение следующего приоритета после Hangup")
         
-        add_context_btn = ctk.CTkButton(contexts_frame, text="Добавить контекст", command=self._add_context)
-        add_context_btn.pack(pady=5)
+        globals_label = ctk.CTkLabel(scroll_frame, text="Глобальные переменные (GLOBALS):", font=ctk.CTkFont(weight="bold"))
+        globals_label.pack(anchor="w", pady=(20, 5))
         
-        # Загрузка данных
-        self._load_contexts()
+        self.globals_frame = ctk.CTkFrame(scroll_frame)
+        self.globals_frame.pack(fill="x", pady=5)
+        
+        self.global_entries = []
+        
+        add_global_btn = ctk.CTkButton(self.globals_frame, text="+ Добавить переменную", command=self._add_global)
+        add_global_btn.pack(pady=5)
+    
+    def _add_global(self):
+        frame = ctk.CTkFrame(self.globals_frame)
+        frame.pack(fill="x", pady=2)
+        
+        entry_data = {}
+        
+        ctk.CTkLabel(frame, text="Имя:", width=50).pack(side="left", padx=5)
+        entry_data['name'] = ctk.CTkEntry(frame, width=150)
+        entry_data['name'].pack(side="left", padx=5)
+        
+        ctk.CTkLabel(frame, text="Значение:", width=60).pack(side="left", padx=5)
+        entry_data['value'] = ctk.CTkEntry(frame, width=200)
+        entry_data['value'].pack(side="left", padx=5)
+        
+        del_btn = ctk.CTkButton(frame, text="X", width=30, fg_color="red", hover_color="darkred", command=lambda f=frame, e=entry_data: self._remove_global(f, e))
+        del_btn.pack(side="right", padx=5)
+        
+        self.global_entries.append(entry_data)
+    
+    def _remove_global(self, frame, entry_data):
+        frame.destroy()
+        if entry_data in self.global_entries:
+            self.global_entries.remove(entry_data)
+    
+    def _setup_contexts_tab(self):
+        btn_frame = ctk.CTkFrame(self.contexts_tab)
+        btn_frame.pack(fill="x", padx=10, pady=5)
+        
+        add_btn = ctk.CTkButton(btn_frame, text="+ Добавить контекст", command=self._add_context)
+        add_btn.pack(side="left")
+        
+        self.contexts_frame = ctk.CTkScrollableFrame(self.contexts_tab)
+        self.contexts_frame.pack(fill="both", expand=True, padx=10, pady=5)
     
     def _add_context(self):
-        """Добавляет новый контекст."""
-        frame = ctk.CTkFrame(self.contexts_list_frame)
-        frame.pack(fill="x", pady=5)
+        context_frame = ctk.CTkFrame(self.contexts_frame)
+        context_frame.pack(fill="x", pady=10)
         
-        context_data = {}
+        context_data = {'extensions': []}
         
-        # Имя контекста
-        _, name_entry = create_labeled_entry(
-            frame, "Имя контекста:",
-            tooltip="Имя контекста (латиница, цифры, подчёркивание). Пример: main, from-internal",
-            default="",
-            width=200
-        )
-        context_data['name'] = name_entry
+        header = ctk.CTkFrame(context_frame)
+        header.pack(fill="x", pady=5)
         
-        # Расширения
-        extens_frame = ctk.CTkFrame(frame)
+        ctk.CTkLabel(header, text="Контекст:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
+        context_data['name'] = ctk.CTkEntry(header, width=200)
+        context_data['name'].insert(0, f"context_{len(self.extension_groups) + 1}")
+        context_data['name'].pack(side="left", padx=5)
+        Tooltip(context_data['name'], "Имя контекста (латиница, цифры, подчёркивание)")
+        
+        extens_label = ctk.CTkLabel(context_frame, text="Расширения:", font=ctk.CTkFont(weight="bold"))
+        extens_label.pack(anchor="w", padx=5, pady=(10, 5))
+        
+        extens_container = ctk.CTkFrame(context_frame)
+        extens_container.pack(fill="x", padx=5, pady=5)
+        
+        add_exten_btn = ctk.CTkButton(extens_container, text="+ Добавить расширение", command=lambda: self._add_exten(extens_frame, context_data))
+        add_exten_btn.pack(pady=5)
+        
+        extens_frame = ctk.CTkScrollableFrame(context_frame)
         extens_frame.pack(fill="x", pady=5)
         
-        ctk.CTkLabel(extens_frame, text="Расширения:").pack()
+        del_btn = ctk.CTkButton(context_frame, text="Удалить контекст", width=150, fg_color="red", hover_color="darkred", command=lambda f=context_frame, c=context_data: self._remove_context(f, c))
+        del_btn.pack(pady=10)
         
-        extens_list_frame = ctk.CTkScrollableFrame(extens_frame, height=100)
-        extens_list_frame.pack(fill="x")
-        
-        context_data['extens_list'] = extens_list_frame
-        context_data['extens'] = []
-        
-        def add_exten():
-            exten_frame = ctk.CTkFrame(extens_list_frame)
-            exten_frame.pack(fill="x", pady=2)
-            
-            exten_data = {}
-            
-            _, field1 = create_labeled_entry(exten_frame, "Номер/маска:", tooltip="Номер или маска (_XXX.)", default="", width=150)
-            exten_data['field1'] = field1
-            
-            _, field2 = create_labeled_entry(exten_frame, "Каналы/команды:", tooltip="SIP/101 или команды", default="", width=200)
-            exten_data['field2'] = field2
-            
-            _, field3 = create_labeled_entry(exten_frame, "Макс. соединений:", tooltip="Опционально", default="", width=80)
-            exten_data['field3'] = field3
-            
-            _, field4 = create_labeled_entry(exten_frame, "Приоритетные каналы:", tooltip="Опционально", default="", width=150)
-            exten_data['field4'] = field4
-            
-            del_btn = ctk.CTkButton(exten_frame, text="X", width=30, command=lambda: self._remove_exten(exten_frame, context_data))
-            del_btn.pack(side="right", padx=5)
-            
-            context_data['extens'].append(exten_data)
-        
-        add_exten_btn = ctk.CTkButton(extens_frame, text="+ Добавить расширение", command=add_exten)
-        add_exten_btn.pack(pady=2)
-        
-        # Удалить контекст
-        del_btn = ctk.CTkButton(frame, text="Удалить контекст", width=120, command=lambda: self._remove_context(frame))
-        del_btn.pack(pady=5)
-        
-        self.contexts.append((frame, context_data))
+        self.extension_groups.append(context_data)
     
-    def _remove_exten(self, frame, context_data):
+    def _add_exten(self, parent_frame, context_data):
+        exten_frame = ctk.CTkFrame(parent_frame)
+        exten_frame.pack(fill="x", pady=5)
+        
+        exten_data = {}
+        
+        row1 = ctk.CTkFrame(exten_frame)
+        row1.pack(fill="x", pady=2)
+        
+        ctk.CTkLabel(row1, text="Маска/номер:", width=100).pack(side="left", padx=5)
+        exten_data['field1'] = ctk.CTkEntry(row1, width=150)
+        exten_data['field1'].pack(side="left", padx=5)
+        Tooltip(exten_data['field1'], "Номер или маска: 101, _1XX, _20[1-5], _XXX.")
+        
+        ctk.CTkLabel(row1, text="Каналы/команды:", width=110).pack(side="left", padx=5)
+        exten_data['field2'] = ctk.CTkEntry(row1, width=300)
+        exten_data['field2'].pack(side="left", padx=5)
+        Tooltip(exten_data['field2'], "Каналы: SIP/101,Zap/32 или команды: '1,Dial(SIP/101)','2,Hangup()'")
+        
+        row2 = ctk.CTkFrame(exten_frame)
+        row2.pack(fill="x", pady=2)
+        
+        ctk.CTkLabel(row2, text="Макс. соединений:", width=120).pack(side="left", padx=5)
+        exten_data['field3'] = ctk.CTkEntry(row2, width=80)
+        exten_data['field3'].pack(side="left", padx=5)
+        Tooltip(exten_data['field3'], "Опционально: максимальное число соединений в транке")
+        
+        ctk.CTkLabel(row2, text="Приоритетные каналы:", width=130).pack(side="left", padx=5)
+        exten_data['field4'] = ctk.CTkEntry(row2, width=200)
+        exten_data['field4'].pack(side="left", padx=5)
+        Tooltip(exten_data['field4'], "Опционально: Zap/32,Zap/33")
+        
+        del_btn = ctk.CTkButton(exten_frame, text="X", width=30, fg_color="red", hover_color="darkred", command=lambda f=exten_frame, e=exten_data, c=context_data: self._remove_exten(f, e, c))
+        del_btn.pack(side="right", padx=5, pady=5)
+        
+        context_data['extensions'].append(exten_data)
+    
+    def _remove_exten(self, frame, exten_data, context_data):
         frame.destroy()
-        context_data['extens'] = [e for e in context_data['extens'] if e.get('field1') and hasattr(e['field1'], 'winfo_rootx') and e['field1'].winfo_rootx() != frame.winfo_rootx()]
+        if exten_data in context_data['extensions']:
+            context_data['extensions'].remove(exten_data)
     
-    def _remove_context(self, frame):
-        for i, (f, _) in enumerate(self.contexts):
-            if f == frame:
-                frame.destroy()
-                self.contexts.pop(i)
-                break
+    def _remove_context(self, frame, context_data):
+        frame.destroy()
+        if context_data in self.extension_groups:
+            self.extension_groups.remove(context_data)
     
-    def _load_contexts(self):
-        for group in self.config_data.extensions.get('EXTENGROUP', []):
+    def _load_data(self):
+        for var, val in self.config_data.extensions_globals.items():
+            self._add_global()
+            entry = self.global_entries[-1]
+            entry['name'].insert(0, var)
+            entry['value'].insert(0, val)
+        
+        for group in self.config_data.extension_groups:
             self._add_context()
-            if self.contexts:
-                frame, data = self.contexts[-1]
-                data['name'].delete(0, 'end')
-                data['name'].insert(0, group.get('NAME', ''))
-                
-                for exten in group.get('EXTEN', []):
-                    extens_list_frame = data['extens_list']
-                    exten_frame = ctk.CTkFrame(extens_list_frame)
-                    exten_frame.pack(fill="x", pady=2)
-                    
-                    exten_data = {}
-                    
-                    _, field1 = create_labeled_entry(exten_frame, "Номер/маска:", tooltip="", default=exten.get('field1', ''), width=150)
-                    exten_data['field1'] = field1
-                    
-                    _, field2 = create_labeled_entry(exten_frame, "Каналы/команды:", tooltip="", default=exten.get('field2', ''), width=200)
-                    exten_data['field2'] = field2
-                    
-                    _, field3 = create_labeled_entry(exten_frame, "Макс. соединений:", tooltip="", default=exten.get('field3', ''), width=80)
-                    exten_data['field3'] = field3
-                    
-                    _, field4 = create_labeled_entry(exten_frame, "Приоритетные каналы:", tooltip="", default=exten.get('field4', ''), width=150)
-                    exten_data['field4'] = field4
-                    
-                    del_btn = ctk.CTkButton(exten_frame, text="X", width=30, command=lambda f=exten_frame, d=data: self._remove_exten(f, d))
-                    del_btn.pack(side="right", padx=5)
-                    
-                    data['extens'].append(exten_data)
+            ctx = self.extension_groups[-1]
+            ctx['name'].delete(0, 'end')
+            ctx['name'].insert(0, group.get('NAME', ''))
+            
+            for exten in group.get('EXTENSIONS', []):
+                self._add_exten(self.contexts_frame.master.master.master if hasattr(self.contexts_frame, 'master') else self.contexts_frame, ctx)
+                ext_entry = ctx['extensions'][-1]
+                ext_entry['field1'].insert(0, exten.get('FIELD1', ''))
+                ext_entry['field2'].insert(0, exten.get('FIELD2', ''))
+                ext_entry['field3'].insert(0, exten.get('FIELD3', ''))
+                ext_entry['field4'].insert(0, exten.get('FIELD4', ''))
     
     def save_data(self):
-        # Общие настройки
-        self.config_data.extensions['GENERAL'] = {
-            'STATIC': self.static_var.get(),
-            'WRITEPROTECT': self.writeprotect_var.get(),
-            'CLEARGLOBALVARS': False,
-            'AUTOFALLTHROUGH': self.autofallthrough_var.get()
-        }
+        self.config_data.extensions_general['STATIC'] = self.static_var.get()
+        self.config_data.extensions_general['WRITEPROTECT'] = self.writeprotect_var.get()
+        self.config_data.extensions_general['CLEARGLOBALVARS'] = self.clearglobalvars_var.get()
+        self.config_data.extensions_general['AUTOFALLTHROUGH'] = self.autofallthrough_var.get()
         
-        # Контексты
-        self.config_data.extensions['EXTENGROUP'] = []
-        for frame, data in self.contexts:
+        self.config_data.extensions_globals = {}
+        for entry in self.global_entries:
+            name = entry['name'].get().strip()
+            value = entry['value'].get().strip()
+            if name:
+                self.config_data.extensions_globals[name] = value
+        
+        self.config_data.extension_groups = []
+        for ctx in self.extension_groups:
             group = {
-                'NAME': data['name'].get().strip(),
-                'EXTEN': []
+                'NAME': ctx['name'].get().strip(),
+                'EXTENSIONS': []
             }
-            
-            for exten_data in data['extens']:
-                exten = {
-                    'field1': exten_data['field1'].get().strip(),
-                    'field2': exten_data['field2'].get().strip(),
-                    'field3': exten_data['field3'].get().strip(),
-                    'field4': exten_data['field4'].get().strip()
+            for exten in ctx['extensions']:
+                ext = {
+                    'FIELD1': exten['field1'].get().strip(),
+                    'FIELD2': exten['field2'].get().strip(),
+                    'FIELD3': exten['field3'].get().strip(),
+                    'FIELD4': exten['field4'].get().strip()
                 }
-                group['EXTEN'].append(exten)
-            
-            self.config_data.extensions['EXTENGROUP'].append(group)
+                group['EXTENSIONS'].append(ext)
+            self.config_data.extension_groups.append(group)
     
     def validate(self) -> bool:
         self.error_messages = []
         
-        # Проверяем что есть хотя бы один контекст
-        if not self.contexts:
-            self.error_messages.append("Необходимо добавить хотя бы один контекст (EXTENGROUP)")
-            return False
-        
-        # Проверяем каждый контекст
-        for frame, data in self.contexts:
-            name = data['name'].get().strip()
+        has_context = False
+        for ctx in self.extension_groups:
+            name = ctx['name'].get().strip()
             if not name:
                 self.error_messages.append("Имя контекста не может быть пустым")
-                data['name'].configure(border_color="red")
+                ctx['name'].configure(border_color="red")
+                return False
             
-            # Проверяем что есть хотя бы одно расширение
-            if not data['extens']:
-                self.error_messages.append(f"Контекст '{name}' должен содержать хотя бы одно расширение")
-            
-            # Валидация расширений
-            for exten_data in data['extens']:
-                field1 = exten_data['field1'].get().strip()
-                if not field1:
-                    self.error_messages.append("Номер/маска расширения не могут быть пустыми")
-                    exten_data['field1'].configure(border_color="red")
+            if ctx['extensions']:
+                has_context = True
+                for exten in ctx['extensions']:
+                    field1 = exten['field1'].get().strip()
+                    field2 = exten['field2'].get().strip()
+                    
+                    if not field1:
+                        self.error_messages.append("Маска/номер расширения не может быть пустой")
+                        exten['field1'].configure(border_color="red")
+                        return False
+                    
+                    if not field2:
+                        self.error_messages.append("Каналы/команды не могут быть пустыми")
+                        exten['field2'].configure(border_color="red")
+                        return False
         
-        return len(self.error_messages) == 0
+        if not has_context:
+            self.error_messages.append("Требуется хотя бы один контекст с хотя бы одним расширением")
+            return False
+        
+        return True
 
-
-# ============================================================================
-# СТРАНИЦА ПРЕДПРОСМОТРА
-# ============================================================================
 
 class PreviewPage(Page):
-    """Страница предпросмотра конфигурации."""
+    """Итоговая страница предпросмотра."""
     
     TITLE = "Предпросмотр"
-    TOOLTIP = "Просмотр готового файла"
+    TOOLTIP = "Предпросмотр конфигурации"
     IS_OPTIONAL = False
     
     def __init__(self, parent, config_data: ConfigData, app):
@@ -899,60 +823,61 @@ class PreviewPage(Page):
         title = ctk.CTkLabel(self, text="Предпросмотр конфигурационного файла", font=ctk.CTkFont(size=20, weight="bold"))
         title.pack(pady=10)
         
-        self.textbox = ctk.CTkTextbox(self, width=800, height=500)
-        self.textbox.pack(fill="both", expand=True, padx=20, pady=10)
-    
-    def load_data(self):
-        """Генерирует и отображает конфигурацию."""
-        generator = ConfigGenerator(self.config_data)
-        config_text = generator.generate()
+        self.preview_text = ctk.CTkTextbox(self, width=800, height=500)
+        self.preview_text.pack(fill="both", expand=True, padx=20, pady=10)
         
-        self.textbox.delete("0.0", "end")
-        self.textbox.insert("0.0", config_text)
+        self.update_preview()
+    
+    def update_preview(self):
+        generator = ConfigGenerator(self.config_data)
+        content = generator.generate()
+        self.preview_text.delete("0.0", "end")
+        self.preview_text.insert("0.0", content)
+    
+    def save_data(self):
+        pass
     
     def validate(self) -> bool:
         return True
 
 
-# Placeholder страницы для необязательных секций
 class PlaceholderPage(Page):
-    """Страница-заглушка для ещё не реализованных секций."""
+    """Страница-заглушка для необязательных секций."""
     
-    IS_OPTIONAL = True
-    
-    def __init__(self, parent, config_data: ConfigData, app, title: str, tooltip: str = ""):
+    def __init__(self, parent, config_data: ConfigData, app, title: str, tooltip: str, enabled_attr: str):
         super().__init__(parent, config_data, app)
-        self.TITLE = title
+        self.page_title = title
         self.TOOLTIP = tooltip
+        self.enabled_attr = enabled_attr
         
-        title_label = ctk.CTkLabel(
-            self, 
-            text=f"Настройки {title}", 
-            font=ctk.CTkFont(size=20, weight="bold")
-        )
+        title_label = ctk.CTkLabel(self, text=f"{title} (необязательно)", font=ctk.CTkFont(size=20, weight="bold"))
         title_label.pack(pady=20)
         
         desc = ctk.CTkLabel(
             self,
-            text=f"Редактирование секции {title} будет реализовано в следующей версии.\n\nВы можете пропустить эту секцию.",
+            text=f"Настройка {title} необязательна. Вы можете пропустить этот шаг.",
             wraplength=600,
             justify="center"
         )
-        desc.pack(pady=20)
+        desc.pack(pady=10)
+        
+        self.enabled_var = ctk.BooleanVar(value=False)
+        self.enabled_cb = ctk.CTkCheckBox(
+            self,
+            text=f"Включить секцию {title}",
+            variable=self.enabled_var
+        )
+        self.enabled_cb.pack(pady=20)
+    
+    def save_data(self):
+        setattr(self.config_data, self.enabled_attr, self.enabled_var.get())
     
     def validate(self) -> bool:
         return True
-    
-    def save_data(self):
-        pass
 
-
-# ============================================================================
-# ГЛАВНОЕ ПРИЛОЖЕНИЕ
-# ============================================================================
 
 class App(ctk.CTk):
-    """Главное окно приложения."""
+    """Главное приложение."""
     
     def __init__(self):
         super().__init__()
@@ -960,215 +885,160 @@ class App(ctk.CTk):
         self.title("Мастер конфигурации IP-АТС Т76-С")
         self.geometry("900x700")
         
-        # Данные конфигурации
         self.config_data = ConfigData()
-        
-        # Список страниц
-        self.pages: List[Page] = []
         self.current_page_index = 0
         
-        # Создаём интерфейс
-        self._create_ui()
+        self.pages: List[Page] = []
         
-        # Создаём страницы
+        self._setup_ui()
         self._create_pages()
-        
-        # Показываем первую страницу
         self.show_page(0)
     
-    def _create_ui(self):
-        """Создаёт основной интерфейс."""
-        # Основная область
-        self.main_area = ctk.CTkFrame(self)
-        self.main_area.pack(fill="both", expand=True, padx=10, pady=10)
+    def _setup_ui(self):
+        self.header_frame = ctk.CTkFrame(self)
+        self.header_frame.pack(fill="x", padx=10, pady=5)
         
-        # Контейнер для страниц
-        self.page_container = ctk.CTkFrame(self.main_area)
-        self.page_container.pack(fill="both", expand=True)
-        
-        # Индикатор прогресса
-        self.progress_frame = ctk.CTkFrame(self.main_area)
-        self.progress_frame.pack(fill="x", pady=5)
-        
-        self.progress_label = ctk.CTkLabel(self.progress_frame, text="Шаг 1 из 14")
+        self.progress_label = ctk.CTkLabel(self.header_frame, text="Шаг 1 из 14", font=ctk.CTkFont(size=14))
         self.progress_label.pack(side="left", padx=10)
         
-        self.progress_bar = ctk.CTkProgressBar(self.progress_frame, width=400)
-        self.progress_bar.pack(side="left", padx=10)
+        self.section_label = ctk.CTkLabel(self.header_frame, text="SYSTEM", font=ctk.CTkFont(size=14, weight="bold"))
+        self.section_label.pack(side="left", padx=10)
+        
+        self.progress_bar = ctk.CTkProgressBar(self.header_frame, mode="determinate")
+        self.progress_bar.pack(side="right", padx=10, pady=10)
         self.progress_bar.set(0)
         
-        # Нижняя панель с кнопками
-        self.bottom_panel = ctk.CTkFrame(self.main_area)
-        self.bottom_panel.pack(fill="x", pady=10)
+        self.container = ctk.CTkFrame(self)
+        self.container.pack(fill="both", expand=True, padx=10, pady=5)
         
-        self.btn_help = ctk.CTkButton(self.bottom_panel, text="Справка", command=self._show_help)
-        self.btn_help.pack(side="left", padx=10)
+        self.footer_frame = ctk.CTkFrame(self)
+        self.footer_frame.pack(fill="x", padx=10, pady=5)
         
-        self.btn_cancel = ctk.CTkButton(self.bottom_panel, text="Отмена", command=self._cancel)
-        self.btn_cancel.pack(side="left", padx=10)
+        self.back_btn = ctk.CTkButton(self.footer_frame, text="Назад", command=self.prev_page, state="disabled")
+        self.back_btn.pack(side="left", padx=5)
         
-        self.btn_back = ctk.CTkButton(self.bottom_panel, text="Назад", command=self._go_back)
-        self.btn_back.pack(side="right", padx=10)
+        self.next_btn = ctk.CTkButton(self.footer_frame, text="Далее", command=self.next_page)
+        self.next_btn.pack(side="left", padx=5)
         
-        self.btn_next = ctk.CTkButton(self.bottom_panel, text="Далее", command=self._go_next)
-        self.btn_next.pack(side="right", padx=10)
+        self.cancel_btn = ctk.CTkButton(self.footer_frame, text="Отмена", command=self._cancel, fg_color="gray")
+        self.cancel_btn.pack(side="right", padx=5)
+        
+        self.help_btn = ctk.CTkButton(self.footer_frame, text="Справка", command=self._show_help)
+        self.help_btn.pack(side="right", padx=5)
+        
+        self.status_label = ctk.CTkLabel(self.footer_frame, text="", text_color="red")
+        self.status_label.pack(side="left", padx=20)
     
     def _create_pages(self):
-        """Создаёт все страницы мастера."""
-        # SYSTEM (обязательная)
-        self.pages.append(SystemPage(self.page_container, self.config_data, self))
+        self.pages = [
+            SystemPage(self.container, self.config_data, self),
+            NtpPage(self.container, self.config_data, self),
+            NetworkPage(self.container, self.config_data, self),
+            PlaceholderPage(self.container, self.config_data, self, "MPLS", "MPLS маршрутизация", "mpls_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "TUNNELS", "VPN туннели", "tunnels_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "TC", "Управление трафиком", "tc_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "IPTABLES", "Межсетевой экран", "iptables_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "IAX", "Протокол IAX2", "iax_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "SIP", "Протокол SIP", "sip_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "ZAPTEL", "Настройка ZAPTEL", "zaptel_enabled"),
+            PlaceholderPage(self.container, self.config_data, self, "ZAPATA", "Настройка ZAPATA", "zapata_enabled"),
+            ExtensionsPage(self.container, self.config_data, self),
+            PlaceholderPage(self.container, self.config_data, self, "ALARM", "Обработка событий", "alarm_enabled"),
+            PreviewPage(self.container, self.config_data, self)
+        ]
         
-        # NTP (необязательная)
-        self.pages.append(NtpPage(self.page_container, self.config_data, self))
-        
-        # NETWORK (обязательная)
-        self.pages.append(NetworkPage(self.page_container, self.config_data, self))
-        
-        # MPLS (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "MPLS", "Маршрутизация MPLS"))
-        
-        # TUNNELS (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "TUNNELS", "Настройка туннелей"))
-        
-        # TC (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "TC", "Управление трафиком"))
-        
-        # IPTABLES (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "IPTABLES", "Межсетевой экран"))
-        
-        # IAX (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "IAX", "Настройка IAX"))
-        
-        # SIP (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "SIP", "Настройка SIP"))
-        
-        # ZAPTEL (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "ZAPTEL", "Настройка Zaptel"))
-        
-        # ZAPATA (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "ZAPATA", "Настройка Zapata"))
-        
-        # EXTENSIONS (обязательная)
-        self.pages.append(ExtensionsPage(self.page_container, self.config_data, self))
-        
-        # ALARM (необязательная)
-        self.pages.append(PlaceholderPage(self.page_container, self.config_data, self, "ALARM", "Обработка событий"))
-        
-        # Предпросмотр
-        self.pages.append(PreviewPage(self.page_container, self.config_data, self))
-        
-        # Обновляем прогресс бар
-        self._update_progress()
+        for page in self.pages:
+            page.pack_forget()
     
     def show_page(self, index: int):
-        """Показывает страницу по индексу."""
         if index < 0 or index >= len(self.pages):
             return
         
-        # Сохраняем данные текущей страницы перед переключением
-        if 0 <= self.current_page_index < len(self.pages):
-            self.pages[self.current_page_index].save_data()
+        if self.current_page_index < len(self.pages):
+            self.pages[self.current_page_index].pack_forget()
         
-        # Скрываем все страницы вместо удаления
-        for page in self.pages:
-            page.pack_forget()
-        
-        # Показываем новую страницу
         self.current_page_index = index
         page = self.pages[index]
         page.pack(fill="both", expand=True)
-        page.load_data()
         
-        # Обновляем кнопки
-        self.btn_back.configure(state="normal" if index > 0 else "disabled")
+        total_pages = len(self.pages)
+        self.progress_label.configure(text=f"Шаг {index + 1} из {total_pages}")
+        self.section_label.configure(text=page.TITLE)
+        self.progress_bar.set((index + 1) / total_pages)
         
-        if index == len(self.pages) - 1:
-            self.btn_next.configure(text="Сохранить файл")
+        self.back_btn.configure(state="normal" if index > 0 else "disabled")
+        
+        if index == total_pages - 1:
+            self.next_btn.configure(text="Сохранить файл", command=self.save_file)
         else:
-            self.btn_next.configure(text="Далее")
+            self.next_btn.configure(text="Далее", command=self.next_page)
         
-        self._update_progress()
+        self.status_label.configure(text="")
     
-    def _update_progress(self):
-        """Обновляет индикатор прогресса."""
-        total = len(self.pages)
-        current = self.current_page_index + 1
-        self.progress_label.configure(text=f"Шаг {current} из {total}: {self.pages[self.current_page_index].TITLE}")
-        self.progress_bar.set(current / total)
-    
-    def _go_next(self):
-        """Переход к следующей странице."""
+    def next_page(self):
         current_page = self.pages[self.current_page_index]
         
-        # Проверяем валидацию
         if not current_page.validate():
             errors = current_page.get_error_messages()
             if errors:
-                messagebox.showerror("Ошибка валидации", "\n".join(errors))
+                self.status_label.configure(text=errors[0])
             return
         
-        # Сохраняем данные
         current_page.save_data()
         
-        # Переходим дальше или сохраняем
-        if self.current_page_index == len(self.pages) - 1:
-            self._save_file()
-        else:
+        if self.current_page_index < len(self.pages) - 1:
             self.show_page(self.current_page_index + 1)
     
-    def _go_back(self):
-        """Переход к предыдущей странице."""
+    def prev_page(self):
         if self.current_page_index > 0:
             self.pages[self.current_page_index].save_data()
             self.show_page(self.current_page_index - 1)
     
-    def _save_file(self):
-        """Сохраняет конфигурационный файл."""
-        filename = filedialog.asksaveasfilename(
+    def save_file(self):
+        current_page = self.pages[self.current_page_index]
+        current_page.save_data()
+        
+        generator = ConfigGenerator(self.config_data)
+        content = generator.generate()
+        
+        default_name = f"{self.config_data.system.get('HOSTNAME', 'ats1')}.conf"
+        
+        file_path = filedialog.asksaveasfilename(
             defaultextension=".conf",
             filetypes=[("Config files", "*.conf"), ("All files", "*.*")],
-            initialfile=f"{self.config_data.system.get('HOSTNAME', 'ats1')}.conf"
+            initialfile=default_name,
+            title="Сохранить конфигурационный файл"
         )
         
-        if filename:
+        if file_path:
             try:
-                generator = ConfigGenerator(self.config_data)
-                config_text = generator.generate()
+                with open(file_path, 'w', encoding='utf-8', newline='\n') as f:
+                    f.write(content)
                 
-                with open(filename, 'w', encoding='utf-8', newline='\n') as f:
-                    f.write(config_text)
+                messagebox.showinfo("Успех", f"Файл успешно сохранён:\n{file_path}")
                 
-                messagebox.showinfo("Успех", f"Конфигурационный файл сохранён:\n{filename}")
-                
-                # Предлагаем начать заново или выйти
-                result = messagebox.askyesno("Завершение", "Создать новый конфигурационный файл?")
-                if result:
-                    self._reset()
+                restart = messagebox.askyesno("Завершение", "Создать новый конфиг?")
+                if restart:
+                    self.config_data = ConfigData()
+                    for page in self.pages:
+                        page.destroy()
+                    self.pages.clear()
+                    self._create_pages()
+                    self.show_page(0)
                 else:
                     self.quit()
             except Exception as e:
-                messagebox.showerror("Ошибка сохранения", f"Не удалось сохранить файл:\n{str(e)}")
-    
-    def _reset(self):
-        """Сбрасывает все данные и начинает сначала."""
-        self.config_data.reset()
-        self.show_page(0)
+                messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
     
     def _cancel(self):
-        """Отменяет настройку и выходит."""
-        if messagebox.askyesno("Подтверждение", "Вы уверены, что хотите выйти без сохранения?"):
+        if messagebox.askyesno("Подтверждение", "Отменить создание конфига?"):
             self.quit()
     
     def _show_help(self):
-        """Показывает справку по текущей секции."""
         page = self.pages[self.current_page_index]
-        help_text = f"Справка по секции {page.TITLE}\n\n{page.TOOLTIP}"
+        help_text = f"Справка: {page.TITLE}\n\n{page.TOOLTIP}"
         messagebox.showinfo("Справка", help_text)
 
-
-# ============================================================================
-# ЗАПУСК ПРИЛОЖЕНИЯ
-# ============================================================================
 
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
