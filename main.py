@@ -1069,9 +1069,9 @@ class App(ctk.CTk):
         if 0 <= self.current_page_index < len(self.pages):
             self.pages[self.current_page_index].save_data()
         
-        # Удаляем текущую страницу
-        for widget in self.page_container.winfo_children():
-            widget.destroy()
+        # Скрываем все страницы вместо удаления
+        for page in self.pages:
+            page.pack_forget()
         
         # Показываем новую страницу
         self.current_page_index = index
